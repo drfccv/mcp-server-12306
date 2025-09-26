@@ -48,6 +48,82 @@ USER_AGENT = (
 # Connected clients for session management
 connected_clients: Dict[str, Dict] = {}
 
+async def detect_query_url(client: httpx.AsyncClient, headers: dict) -> str:
+    """
+    动态检测12306的查询URL（queryU、queryG等）
+    通过访问init页面并跟踪重定向来获取当前可用的查询端点
+    """
+    try:
+        # 先访问init页面获取cookie和可能的重定向信息
+        url_init = "https://kyfw.12306.cn/otn/leftTicket/init"
+        init_resp = await client.get(url_init, headers=headers)
+        
+        # 检查是否有JS重定向或页面内容指示的查询端点
+        if init_resp.status_code == 200:
+            content = init_resp.text
+            # 查找页面中可能的查询URL模式
+            if "queryG" in content or "/otn/leftTicket/queryG" in content:
+                return "https://kyfw.12306.cn/otn/leftTicket/queryG"
+            elif "queryU" in content or "/otn/leftTicket/queryU" in content:
+                return "https://kyfw.12306.cn/otn/leftTicket/queryU"
+        
+        # 默认尝试常见的查询端点
+        test_urls = [
+            "https://kyfw.12306.cn/otn/leftTicket/queryG",
+            "https://kyfw.12306.cn/otn/leftTicket/queryU"
+        ]
+        
+        # 使用简单的HEAD请求测试哪个端点可用
+        for test_url in test_urls:
+            try:
+                test_resp = await client.head(test_url, headers=headers)
+                if test_resp.status_code != 404:  # 404表示端点不存在
+                    logger.info(f"检测到可用的查询端点: {test_url}")
+                    return test_url
+            except Exception:
+                continue
+                
+        # 如果都失败，返回默认的queryU（向后兼容）
+        logger.warning("无法检测查询端点，使用默认的queryU")
+        return "https://kyfw.12306.cn/otn/leftTicket/queryU"
+        
+    except Exception as e:
+        logger.error(f"检测查询URL失败: {e}，使用默认queryU")
+        return "https://kyfw.12306.cn/otn/leftTicket/queryU"
+
+async def detect_transfer_query_url(client: httpx.AsyncClient, headers: dict) -> str:
+    """
+    动态检测12306的中转查询URL（lcquery/queryU、lcquery/queryG等）
+    """
+    try:
+        # 先访问init页面获取cookie
+        url_init = "https://kyfw.12306.cn/otn/leftTicket/init"
+        await client.get(url_init, headers=headers)
+        
+        # 尝试常见的中转查询端点
+        test_urls = [
+            "https://kyfw.12306.cn/lcquery/queryG",
+            "https://kyfw.12306.cn/lcquery/queryU"
+        ]
+        
+        # 使用简单的HEAD请求测试哪个端点可用
+        for test_url in test_urls:
+            try:
+                test_resp = await client.head(test_url, headers=headers)
+                if test_resp.status_code != 404:  # 404表示端点不存在
+                    logger.info(f"检测到可用的中转查询端点: {test_url}")
+                    return test_url
+            except Exception:
+                continue
+                
+        # 如果都失败，返回默认的queryU（向后兼容）
+        logger.warning("无法检测中转查询端点，使用默认的queryU")
+        return "https://kyfw.12306.cn/lcquery/queryU"
+        
+    except Exception as e:
+        logger.error(f"检测中转查询URL失败: {e}，使用默认queryU")
+        return "https://kyfw.12306.cn/lcquery/queryU"
+
 # MCP Tools Definition according to spec
 MCP_TOOLS = [
     {
@@ -712,8 +788,6 @@ async def query_tickets_validated(args: dict) -> list:
                         suggest_text += f"- {s.name}（{s.code}，拼音：{s.pinyin}，简拼：{s.py_short}）\n"
             return [{"type": "text", "text": "❌ 车站名称无效，请检查输入。" + suggest_text + "\n\n💡 可尝试拼音、简拼、三字码或用 search_stations 工具辅助查询。"}]
         import httpx
-        url_init = "https://kyfw.12306.cn/otn/leftTicket/init"
-        url_u = "https://kyfw.12306.cn/otn/leftTicket/queryU"
         headers = {
             "User-Agent": USER_AGENT,
             "Referer": "https://kyfw.12306.cn/otn/leftTicket/init",
@@ -721,15 +795,16 @@ async def query_tickets_validated(args: dict) -> list:
             "Accept": "application/json, text/javascript, */*; q=0.01"
         }
         async with httpx.AsyncClient(follow_redirects=False, timeout=8, verify=False) as client:
-            await client.get(url_init, headers=headers)
+            # 动态检测查询URL
+            query_url = await detect_query_url(client, headers)
             params = {
                 "leftTicketDTO.train_date": train_date,
                 "leftTicketDTO.from_station": from_code,
                 "leftTicketDTO.to_station": to_code,
                 "purpose_codes": "ADULT"
             }
-            resp = await client.get(url_u, headers=headers, params=params)
-            logger.info(f"12306 queryU status: {resp.status_code}, url: {resp.url}")
+            resp = await client.get(query_url, headers=headers, params=params)
+            logger.info(f"12306 query status: {resp.status_code}, url: {resp.url}")
             if resp.status_code != 200:
                 logger.error(f"12306接口返回异常: {resp.status_code}, body: {resp.text}")
                 return [{"type": "text", "text": f"❌ 12306接口返回异常: {resp.status_code}\n{resp.text}"}]
@@ -818,8 +893,6 @@ async def get_train_no_by_train_code_validated(args: dict) -> list:
             return [{"type": "text", "text": f"❌ 到达站无效或无法识别：{to_station}"}]
         to_station = code
     import httpx
-    url_init = "https://kyfw.12306.cn/otn/leftTicket/init"
-    url_u = "https://kyfw.12306.cn/otn/leftTicket/queryU"
     headers = {
         "User-Agent": USER_AGENT,
         "Referer": "https://kyfw.12306.cn/otn/leftTicket/init",
@@ -827,14 +900,15 @@ async def get_train_no_by_train_code_validated(args: dict) -> list:
         "Accept": "application/json, text/javascript, */*; q=0.01"
     }
     async with httpx.AsyncClient(follow_redirects=False, timeout=8, verify=False) as client:
-        await client.get(url_init, headers=headers)
+        # 动态检测查询URL
+        query_url = await detect_query_url(client, headers)
         params = {
             "leftTicketDTO.train_date": train_date,
             "leftTicketDTO.from_station": from_station,
             "leftTicketDTO.to_station": to_station,
             "purpose_codes": "ADULT"
         }
-        resp = await client.get(url_u, headers=headers, params=params)
+        resp = await client.get(query_url, headers=headers, params=params)
         try:
             data = resp.json().get("data", {})
             tickets_data = data.get("result", [])
@@ -1078,8 +1152,6 @@ async def query_transfer_validated(args: dict) -> list:
             return [{"type": "text", "text": f"❌ 到达站无效或无法识别：{to_station}"}]
         
         # 使用参考代码的完整分页查询逻辑
-        url_init = "https://kyfw.12306.cn/otn/leftTicket/init"
-        url = "https://kyfw.12306.cn/lcquery/queryU"
         headers = {
             "User-Agent": USER_AGENT,
             "Referer": "https://kyfw.12306.cn/otn/leftTicket/init",
@@ -1093,8 +1165,8 @@ async def query_transfer_validated(args: dict) -> list:
         
         all_transfer_list = []
         async with httpx.AsyncClient(follow_redirects=False, timeout=8, verify=False) as client:
-            # 先访问init获取cookie
-            await client.get(url_init, headers=headers)
+            # 动态检测中转查询URL
+            query_url = await detect_transfer_query_url(client, headers)
             
             # 分页查询所有中转方案
             page_size = 10
@@ -1112,7 +1184,7 @@ async def query_transfer_validated(args: dict) -> list:
                     "channel": "E"
                 }
                 
-                resp = await client.get(url, headers=headers, params=params)
+                resp = await client.get(query_url, headers=headers, params=params)
                 
                 # 检查反爬虫
                 if resp.status_code == 302 or "error.html" in str(resp.headers.get("location", "")):
