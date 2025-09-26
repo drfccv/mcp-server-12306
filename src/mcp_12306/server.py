@@ -868,7 +868,7 @@ async def get_train_no_by_train_code_validated(args: dict) -> list:
     """
     根据车次号、出发站、到达站、日期，查询唯一列车编号train_no。
     只允许精确匹配，所有参数必须为全名或三字码。
-    直接请求 /otn/leftTicket/queryU。
+    动态请求 /otn/leftTicket/queryU 或 /otn/leftTicket/queryG。
     """
     train_code = args.get("train_code", "").strip().upper()
     from_station = args.get("from_station", "").strip().upper()
