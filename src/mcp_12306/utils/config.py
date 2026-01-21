@@ -1,6 +1,5 @@
 """配置管理"""
 
-import os
 import logging
 from typing import Optional
 from pathlib import Path
@@ -14,11 +13,6 @@ class Settings(BaseSettings):
     server_host: str = Field(default="0.0.0.0", description="服务器主机地址")
     server_port: int = Field(default=8000, description="服务器端口")
     debug: bool = Field(default=False, description="调试模式")
-    user_agent: str = Field(
-        default="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        description="用户代理字符串"
-    )
-    request_timeout: int = Field(default=30, description="请求超时时间（秒）")
     log_level: str = Field(default="INFO", description="日志级别")
 
     model_config = SettingsConfigDict(

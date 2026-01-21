@@ -3,7 +3,6 @@ import aiohttp
 import aiofiles
 import os
 import sys
-import logging
 from datetime import datetime
 
 # 兼容包路径，自动把项目根目录加入PYTHONPATH

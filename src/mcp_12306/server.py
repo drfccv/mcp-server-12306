@@ -1,23 +1,19 @@
 import asyncio
 import json
 import logging
-import random
 import httpx
 from datetime import datetime, date
-import datetime as dtmod
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any
 import uuid
 import pytz
+import re
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import StreamingResponse, JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
-from .models.ticket import TicketQuery
 from .services.station_service import StationService
-from .services.ticket_service import TicketService
-from .services.http_client import HttpClient
 from .utils.config import get_settings
 from .utils.date_utils import validate_date
 
@@ -29,10 +25,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 station_service = StationService()
-ticket_service = TicketService()
-http_client = HttpClient()
-# 确保票务服务使用同一个车站服务实例
-ticket_service.station_service = station_service
 
 # MCP Protocol Version - Support 2025-03-26 Streamable HTTP transport
 MCP_PROTOCOL_VERSION = "2025-03-26"  # Updated to latest protocol version
@@ -52,7 +44,7 @@ connected_clients: Dict[str, Dict] = {}
 MCP_TOOLS = [
     {
         "name": "query-tickets",
-        "description": "官方12306余票/车次/座席/时刻一站式查询。输入出发站、到达站、日期，返回所有可购车次、时刻、历时、各席别余票等详细信息。支持中文名、三字码。",
+        "description": "官方12306余票/车次/座席/时刻一站式查询。输入出发站、到达站、日期，返回所有可购车次、时刻、历时、各席别余票等详细信息。支持中文名、三字码。\n\n【重要提示】返回的车次可能包含经停该线路的所有列车，实际起止站点可能与查询站点不同。AI助手应根据用户实际需求筛选合适的车次（例如：用户查询'某地到XX西站'，返回结果可能包含途经'XX站'或'XX东站'的车次，需要注意from_station和to_station字段进行精确匹配）。",
         "inputSchema": {
             "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
@@ -217,7 +209,7 @@ async def mcp_endpoint_get(request: Request):
     """MCP Streamable HTTP Endpoint - GET for SSE connection (optional)"""
     # Generate session ID for this connection
     session_id = str(uuid.uuid4())
-    logger.info(f"🔗 New MCP GET connection established - Session ID: {session_id}")
+    logger.info(f"New MCP GET connection established - Session ID: {session_id}")
     
     # Store client connection info
     connected_clients[session_id] = {
@@ -236,12 +228,12 @@ async def mcp_endpoint_get(request: Request):
                 yield f"event: ping\ndata: {{\"timestamp\": \"{datetime.now().isoformat()}\"}}\n\n"
                 
         except asyncio.CancelledError:
-            logger.info(f"🔌 MCP GET connection closed - Session ID: {session_id}")
+            logger.info(f"MCP GET connection closed - Session ID: {session_id}")
             # Clean up client connection
             if session_id in connected_clients:
                 del connected_clients[session_id]
         except Exception as e:
-            logger.error(f"❌ MCP GET error for session {session_id}: {e}")
+            logger.error(f"MCP GET error for session {session_id}: {e}")
             # Clean up client connection
             if session_id in connected_clients:
                 del connected_clients[session_id]
@@ -277,7 +269,7 @@ async def mcp_endpoint_post(request: Request):
         if not method:
             raise HTTPException(status_code=400, detail="Method is required")
         
-        logger.info(f"📨 Received MCP request: {method} (ID: {request_id})")
+        logger.info(f"Received MCP request: {method} (ID: {request_id})")
         
         # Handle initialization - no session ID required for this
         if method == "initialize":
@@ -285,8 +277,8 @@ async def mcp_endpoint_post(request: Request):
             client_protocol_version = params.get("protocolVersion", MCP_PROTOCOL_VERSION)
             client_info = params.get("clientInfo", {})
             
-            logger.info(f"🚀 Initialize request - Client Protocol: {client_protocol_version}")
-            logger.info(f"📱 Client Info: {client_info}")
+            logger.info(f"Initialize request - Client Protocol: {client_protocol_version}")
+            logger.info(f"Client Info: {client_info}")
             
             # Generate new session ID for this client
             session_id = str(uuid.uuid4())
@@ -314,14 +306,13 @@ async def mcp_endpoint_post(request: Request):
                         "description": "12306火车票查询服务，提供车票查询、车站搜索、中转查询等功能"
                     },
                     "capabilities": {
-                        "tools": {},  # Server supports tools
-                        "logging": {}  # Server supports logging
+                        "tools": {}
                     }
                 }
             }
             
             # Return response with Mcp-Session-Id header
-            logger.info(f"✅ Initialize response sent - Protocol: {accepted_version}, Session: {session_id}")
+            logger.info(f"Initialize response sent - Protocol: {accepted_version}, Session: {session_id}")
             return JSONResponse(
                 response,
                 headers={
@@ -333,7 +324,7 @@ async def mcp_endpoint_post(request: Request):
         # For all other methods, require session ID
         session_id = request.headers.get("mcp-session-id")
         if not session_id:
-            logger.error("❌ Missing Mcp-Session-Id header for non-initialize request")
+            logger.error("Missing Mcp-Session-Id header for non-initialize request")
             return JSONResponse(
                 {
                     "jsonrpc": "2.0",
@@ -348,7 +339,7 @@ async def mcp_endpoint_post(request: Request):
         
         # Validate session exists
         if session_id not in connected_clients:
-            logger.error(f"❌ Invalid session ID: {session_id}")
+            logger.error(f"Invalid session ID: {session_id}")
             return JSONResponse(
                 {
                     "jsonrpc": "2.0",
@@ -361,11 +352,11 @@ async def mcp_endpoint_post(request: Request):
                 status_code=404  # Use 404 for invalid session as per spec
             )
         
-        logger.info(f"📨 Processing message for session: {session_id}")
+        logger.info(f"Processing message for session: {session_id}")
         
         # Handle tool listing
         if method == "tools/list":
-            logger.info("📋 Tools list requested")
+            logger.info("Tools list requested")
             response = {
                 "jsonrpc": "2.0", 
                 "id": request_id,
@@ -374,85 +365,7 @@ async def mcp_endpoint_post(request: Request):
                 }
             }
             return JSONResponse(response)
-        # 新增 prompts/list 支持
-        elif method == "prompts/list":
-            logger.info("📋 Prompts list requested")
-            response = {
-                "jsonrpc": "2.0",
-                "id": request_id,
-                "result": {
-                    "prompts": [
-                        {
-                            "name": "查询余票",
-                            "title": "查询余票",
-                            "description": "查询某天某线路的余票信息",
-                            "prompt": "查询明天北京到上海的高铁票"
-                        },
-                        {
-                            "name": "中转换乘",
-                            "title": "中转换乘",
-                            "description": "查找需要中转的车次方案",
-                            "prompt": "查询北京到广州的中转换乘方案"
-                        },
-                        {
-                            "name": "车站模糊搜索",
-                            "title": "车站模糊搜索",
-                            "description": "输入拼音、简拼或三字码快速查找车站",
-                            "prompt": "查找南昌的三字码"
-                        },
-                        {
-                            "name": "经停站查询",
-                            "title": "经停站查询",
-                            "description": "查询某车次的所有经停站和时刻表",
-                            "prompt": "查询G1234的经停站"
-                        },
-                        {
-                            "name": "获取当前时间",
-                            "title": "获取当前时间",
-                            "description": "获取今天、明天、后天等常用日期",
-                            "prompt": "现在的日期和明天的日期"
-                        }
-                    ]
-                }
-            }
-            return JSONResponse(response)
-        # 新增 resources/list 支持
-        elif method == "resources/list":
-            logger.info("📋 Resources list requested")
-            response = {
-                "jsonrpc": "2.0",
-                "id": request_id,
-                "result": {
-                    "resources": []  # 返回空数组，而不是带empty的对象
-                }
-            }
-            return JSONResponse(response)
-        # 新增 resources/templates/list 支持
-        elif method == "resources/templates/list":
-            logger.info("📋 Resources templates list requested")
-            response = {
-                "jsonrpc": "2.0",
-                "id": request_id,
-                "result": {
-                    "templates": [
-                        {
-                            "id": "query_ticket_template",
-                            "name": "query_ticket_template",
-                            "title": "查询余票模板",
-                            "description": "快速查询某天某线路的余票信息",
-                            "content": "查询{date}{from_station}到{to_station}的高铁票"
-                        },
-                        {
-                            "id": "transfer_template",
-                            "name": "transfer_template",
-                            "title": "中转换乘模板",
-                            "description": "查找需要中转的车次方案",
-                            "content": "查询{from_station}到{to_station}的中转换乘方案"
-                        }
-                    ]
-                }
-            }
-            return JSONResponse(response)
+        
         # Handle tool execution
         elif method == "tools/call":
             tool_name = params.get("name")
@@ -461,8 +374,8 @@ async def mcp_endpoint_post(request: Request):
             if not tool_name:
                 raise HTTPException(status_code=400, detail="Tool name is required")
             
-            logger.info(f"🔧 Executing tool: {tool_name}")
-            logger.info(f"📋 Arguments: {arguments}")
+            logger.info(f"Executing tool: {tool_name}")
+            logger.info(f"Arguments: {arguments}")
             
             # Execute the appropriate tool
             try:
@@ -482,7 +395,7 @@ async def mcp_endpoint_post(request: Request):
                 else:
                     content = [{
                         "type": "text", 
-                        "text": f"❌ 未知工具: {tool_name}"
+                        "text": f"未知工具: {tool_name}"
                     }]
                 
                 response = {
@@ -493,17 +406,17 @@ async def mcp_endpoint_post(request: Request):
                         "isError": False
                     }
                 }
-                logger.info(f"✅ Tool {tool_name} executed successfully")
+                logger.info(f"Tool {tool_name} executed successfully")
                 
             except Exception as tool_error:
-                logger.error(f"❌ Tool execution error: {tool_error}")
+                logger.error(f"Tool execution error: {tool_error}")
                 response = {
                     "jsonrpc": "2.0",
                     "id": request_id,
                     "result": {
                         "content": [{
                             "type": "text",
-                            "text": f"❌ 工具执行失败: {str(tool_error)}"
+                            "text": f"工具执行失败: {str(tool_error)}"
                         }],
                         "isError": True
                     }
@@ -514,11 +427,11 @@ async def mcp_endpoint_post(request: Request):
         # Handle notifications (no response required)
         elif method and method.startswith("notifications/"):
             notification_type = method.replace("notifications/", "")
-            logger.info(f"📢 Received notification: {notification_type}")
+            logger.info(f"Received notification: {notification_type}")
             
             # Process notification but don't send response
             if notification_type == "initialized":
-                logger.info("🎉 Client initialized successfully - MCP handshake complete!")
+                logger.info("Client initialized successfully - MCP handshake complete!")
                 # Mark session as fully initialized
                 if session_id in connected_clients:
                     connected_clients[session_id]["initialized"] = True
@@ -540,7 +453,7 @@ async def mcp_endpoint_post(request: Request):
         
         # Unknown method
         else:
-            logger.warning(f"⚠️ Unknown method: {method}")
+            logger.warning(f"Unknown method: {method}")
             error_response = {
                 "jsonrpc": "2.0",
                 "id": request_id,
@@ -553,7 +466,7 @@ async def mcp_endpoint_post(request: Request):
             return JSONResponse(error_response, status_code=404)
             
     except json.JSONDecodeError:
-        logger.error("❌ Invalid JSON in request")
+        logger.error("Invalid JSON in request")
         return JSONResponse(
             {
                 "jsonrpc": "2.0",
@@ -566,7 +479,7 @@ async def mcp_endpoint_post(request: Request):
             status_code=400
         )
     except Exception as e:
-        logger.error(f"❌ Unexpected error: {e}")
+        logger.error(f"Unexpected error: {e}")
         return JSONResponse(
             {
                 "jsonrpc": "2.0", 
@@ -593,22 +506,13 @@ async def mcp_endpoint_delete(request: Request):
     
     if session_id in connected_clients:
         del connected_clients[session_id]
-        logger.info(f"🗑️ Session terminated: {session_id}")
+        logger.info(f"Session terminated: {session_id}")
         return Response(status_code=200)
     else:
         return JSONResponse(
             {"error": "Invalid session ID"},
             status_code=404
         )
-
-# 新增 /sse 路由，兼容部分客户端
-@app.get("/sse")
-async def sse_endpoint():
-    async def event_generator():
-        while True:
-            await asyncio.sleep(30)
-            yield f"data: ping {datetime.now().isoformat()}\n\n"
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 # 车站名/三字码自动转换
 async def ensure_telecode(val):
@@ -648,32 +552,45 @@ async def search_stations_validated(args: dict) -> list:
     query = args.get("query", "").strip()
     limit = args.get("limit", 10)
     if not query:
-        return [{"type": "text", "text": "❌ 请输入搜索关键词"}]
+        return [{"type": "text", "text": json.dumps({"success": False, "error": "请输入搜索关键词"}, ensure_ascii=False)}]
     if not isinstance(limit, int) or limit < 1 or limit > 50:
         limit = 10
     result = await station_service.search_stations(query, limit)
     if result.stations:
-        text = f"🚉 **搜索结果:** `{query}`\n\n"
-        text += f"📊 找到 **{len(result.stations)}** 个车站:\n\n"
-        for i, station in enumerate(result.stations, 1):
-            text += f"**{i}.** 🚉 **{station.name}** `({station.code})`\n"
-            text += f"       📍 拼音: `{station.pinyin}`"
-            if station.py_short:
-                text += f" | 简拼: `{station.py_short}`"
-            text += "\n"
+        stations_data = []
+        for station in result.stations:
+            station_dict = {
+                "name": station.name,
+                "code": station.code,
+                "pinyin": station.pinyin,
+                "py_short": station.py_short if station.py_short else "",
+            }
             if hasattr(station, 'num') and station.num:
-                text += f"       🔢 编号: `{station.num}`\n"
-            text += "\n"
-        return [{"type": "text", "text": text}]
+                station_dict["num"] = station.num
+            stations_data.append(station_dict)
+        
+        response_data = {
+            "success": True,
+            "query": query,
+            "count": len(stations_data),
+            "stations": stations_data
+        }
+        return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
     else:
-        text = f"❌ **未找到匹配的车站**\n\n"
-        text += f"🔍 **搜索关键词:** `{query}`\n\n"
-        text += f"💡 **搜索建议:**\n"
-        text += f"• 尝试完整城市名称 (如: `北京`)\n"
-        text += f"• 尝试拼音 (如: `beijing`)\n"
-        text += f"• 尝试简拼 (如: `bj`)\n"
-        text += f"• 检查拼写是否正确"
-        return [{"type": "text", "text": text}]
+        response_data = {
+            "success": False,
+            "query": query,
+            "count": 0,
+            "stations": [],
+            "message": "未找到匹配的车站",
+            "suggestions": [
+                "尝试完整城市名称 (如: 北京)",
+                "尝试拼音 (如: beijing)",
+                "尝试简拼 (如: bj)",
+                "检查拼写是否正确"
+            ]
+        }
+        return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
 
 # ========== query_tickets_validated 重构 ========== 
 async def query_tickets_validated(args: dict) -> list:
@@ -681,7 +598,7 @@ async def query_tickets_validated(args: dict) -> list:
         from_station = args.get("from_station", "").strip()
         to_station = args.get("to_station", "").strip()
         train_date = args.get("train_date", "").strip()
-        logger.info(f"🔍 查询参数: {from_station} → {to_station} ({train_date})")
+        logger.info(f"查询参数: {from_station} -> {to_station} ({train_date})")
         errors = []
         if not from_station:
             errors.append("出发站不能为空")
@@ -692,25 +609,22 @@ async def query_tickets_validated(args: dict) -> list:
         elif not validate_date(train_date):
             errors.append("日期格式错误，请使用 YYYY-MM-DD 格式")
         if errors:
-            error_text = "❌ **参数验证失败:**\n" + "\n".join(f"{i+1}. {err}" for i, err in enumerate(errors))
-            return [{"type": "text", "text": error_text}]
+            response_data = {"success": False, "errors": errors}
+            return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
         from_code = await ensure_telecode(from_station)
         to_code = await ensure_telecode(to_station)
         if not from_code or not to_code:
-            suggest_text = ""
+            suggestions = []
             if not from_code:
                 result = await station_service.search_stations(from_station, 3)
                 if result.stations:
-                    suggest_text += f"\n\n🔍 出发站'{from_station}'可能是：\n"
-                    for s in result.stations:
-                        suggest_text += f"- {s.name}（{s.code}，拼音：{s.pinyin}，简拼：{s.py_short}）\n"
+                    suggestions.append({"station_type": "from", "input": from_station, "matches": [{"name": s.name, "code": s.code, "pinyin": s.pinyin, "py_short": s.py_short} for s in result.stations]})
             if not to_code:
                 result = await station_service.search_stations(to_station, 3)
                 if result.stations:
-                    suggest_text += f"\n\n🔍 到达站'{to_station}'可能是：\n"
-                    for s in result.stations:
-                        suggest_text += f"- {s.name}（{s.code}，拼音：{s.pinyin}，简拼：{s.py_short}）\n"
-            return [{"type": "text", "text": "❌ 车站名称无效，请检查输入。" + suggest_text + "\n\n💡 可尝试拼音、简拼、三字码或用 search_stations 工具辅助查询。"}]
+                    suggestions.append({"station_type": "to", "input": to_station, "matches": [{"name": s.name, "code": s.code, "pinyin": s.pinyin, "py_short": s.py_short} for s in result.stations]})
+            response_data = {"success": False, "error": "车站名称无效", "suggestions": suggestions, "hint": "可尝试拼音、简拼、三字码或用 search_stations 工具辅助查询"}
+            return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
         import httpx
         url_init = "https://kyfw.12306.cn/otn/leftTicket/init"
         url_u = "https://kyfw.12306.cn/otn/leftTicket/queryG"
@@ -732,13 +646,15 @@ async def query_tickets_validated(args: dict) -> list:
             logger.info(f"12306 queryG status: {resp.status_code}, url: {resp.url}")
             if resp.status_code != 200:
                 logger.error(f"12306接口返回异常: {resp.status_code}, body: {resp.text}")
-                return [{"type": "text", "text": f"❌ 12306接口返回异常: {resp.status_code}\n{resp.text}"}]
+                response_data = {"success": False, "error": "12306接口返回异常", "status_code": resp.status_code, "detail": resp.text[:200]}
+                return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
             try:
                 data = resp.json().get("data", {})
                 tickets_data = data.get("result", [])
             except Exception as e:
-                logger.error(f"❌ 12306响应解析失败: {repr(e)}，原始内容: {resp.text}")
-                return [{"type": "text", "text": f"❌ 12306响应解析失败: {repr(e)}\n原始内容: {resp.text}"}]
+                logger.error(f"12306响应解析失败: {repr(e)}，原始内容: {resp.text}")
+                response_data = {"success": False, "error": "12306响应解析失败", "detail": str(e)}
+                return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
         tickets = []
         for ticket_str in tickets_data:
             ticket = parse_ticket_string(ticket_str, {
@@ -749,8 +665,7 @@ async def query_tickets_validated(args: dict) -> list:
             if ticket:
                 tickets.append(ticket)
         if tickets:
-            text = f"🚄 **{from_station} → {to_station}** ({train_date})\n\n"
-            text += f"📊 找到 **{len(tickets)}** 趟列车:\n\n"
+            trains_list = []
             for i, ticket in enumerate(tickets, 1):
                 ticket_str = tickets_data[i-1] if i-1 < len(tickets_data) else None
                 from_station_name = to_station_name = from_code_actual = to_code_actual = None
@@ -760,33 +675,58 @@ async def query_tickets_validated(args: dict) -> list:
                     to_code_actual = parts[7] if len(parts) > 7 else None
                     from_station_obj = await station_service.get_station_by_code(from_code_actual) if from_code_actual else None
                     to_station_obj = await station_service.get_station_by_code(to_code_actual) if to_code_actual else None
-                    from_station_name = from_station_obj.name if from_station_obj else (from_code_actual or "?")
-                    to_station_name = to_station_obj.name if to_station_obj else (to_code_actual or "?")
-                text += f"**{i}.** 🚆 **{ticket['train_no']}** （{from_station_name}[{from_code_actual}] → {to_station_name}[{to_code_actual}]）\n"
-                text += f"      ⏰ `{ticket['start_time']}` → `{ticket['arrive_time']}`"
-                if ticket['duration']:
-                    text += f" (历时 {ticket['duration']})"
-                text += "\n"
-                seats = []
-                if ticket['business_seat_num']: seats.append(f"商务座:{ticket['business_seat_num']}")
-                if ticket['first_class_num']: seats.append(f"一等座:{ticket['first_class_num']}")
-                if ticket['second_class_num']: seats.append(f"二等座:{ticket['second_class_num']}")
-                if ticket['advanced_soft_sleeper_num']: seats.append(f"高级软卧:{ticket['advanced_soft_sleeper_num']}")
-                if ticket['soft_sleeper_num']: seats.append(f"软卧:{ticket['soft_sleeper_num']}")
-                if ticket['hard_sleeper_num']: seats.append(f"硬卧:{ticket['hard_sleeper_num']}")
-                if ticket['soft_seat_num']: seats.append(f"软座:{ticket['soft_seat_num']}")
-                if ticket['hard_seat_num']: seats.append(f"硬座:{ticket['hard_seat_num']}")
-                if ticket['no_seat_num']: seats.append(f"无座:{ticket['no_seat_num']}")
-                if ticket['dongwo_num']: seats.append(f"动卧:{ticket['dongwo_num']}")
-                if seats:
-                    text += f"      💺 {' | '.join(seats)}\n"
-                text += "\n"
-            return [{"type": "text", "text": text}]
+                    from_station_name = from_station_obj.name if from_station_obj else (from_code_actual or "未知")
+                    to_station_name = to_station_obj.name if to_station_obj else (to_code_actual or "未知")
+                
+                seats = {}
+                if ticket['business_seat_num']: seats["business"] = ticket['business_seat_num']
+                if ticket['first_class_num']: seats["first_class"] = ticket['first_class_num']
+                if ticket['second_class_num']: seats["second_class"] = ticket['second_class_num']
+                if ticket['advanced_soft_sleeper_num']: seats["advanced_soft_sleeper"] = ticket['advanced_soft_sleeper_num']
+                if ticket['soft_sleeper_num']: seats["soft_sleeper"] = ticket['soft_sleeper_num']
+                if ticket['hard_sleeper_num']: seats["hard_sleeper"] = ticket['hard_sleeper_num']
+                if ticket['soft_seat_num']: seats["soft_seat"] = ticket['soft_seat_num']
+                if ticket['hard_seat_num']: seats["hard_seat"] = ticket['hard_seat_num']
+                if ticket['no_seat_num']: seats["no_seat"] = ticket['no_seat_num']
+                if ticket['dongwo_num']: seats["dongwo"] = ticket['dongwo_num']
+                
+                train_data = {
+                    "train_no": ticket['train_no'],
+                    "from_station": from_station_name,
+                    "from_station_code": from_code_actual,
+                    "to_station": to_station_name,
+                    "to_station_code": to_code_actual,
+                    "start_time": ticket['start_time'],
+                    "arrive_time": ticket['arrive_time'],
+                    "duration": ticket['duration'],
+                    "seats": seats
+                }
+                trains_list.append(train_data)
+            
+            response_data = {
+                "success": True,
+                "from_station": from_station,
+                "to_station": to_station,
+                "train_date": train_date,
+                "count": len(trains_list),
+                "trains": trains_list
+            }
+            return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
         else:
-            return [{"type": "text", "text": f"❌ 未找到该线路的余票（{from_station}→{to_station} {train_date}）"}]
+            response_data = {
+                "success": False,
+                "from_station": from_station,
+                "to_station": to_station,
+                "train_date": train_date,
+                "count": 0,
+                "trains": [],
+                "message": "未找到该线路的余票"
+            }
+            return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
     except Exception as e:
-        logger.error(f"❌ 查询车票失败: {repr(e)}")
-        return [{"type": "text", "text": f"❌ **查询失败:** {repr(e)}"}]
+        logger.error(f"查询车票失败: {repr(e)}")
+        response_data = {"success": False, "error": "查询失败", "detail": str(e)}
+        return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
 
 # ========== get_train_no_by_train_code_validated 重构 ========== 
 async def get_train_no_by_train_code_validated(args: dict) -> list:
@@ -802,20 +742,24 @@ async def get_train_no_by_train_code_validated(args: dict) -> list:
     try:
         dt = datetime.strptime(train_date, "%Y-%m-%d")
         if dt.date() < date.today():
-            return [{"type": "text", "text": "❌ 出发日期不能早于今天"}]
+            response_data = {"success": False, "error": "出发日期不能早于今天"}
+            return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
     except Exception:
-        return [{"type": "text", "text": "❌ 出发日期格式错误，应为YYYY-MM-DD"}]
+        response_data = {"success": False, "error": "出发日期格式错误，应为YYYY-MM-DD"}
+        return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
     def is_telecode(val):
         return val.isalpha() and val.isupper() and len(val) == 3
     if not is_telecode(from_station):
         code = await station_service.get_station_code(from_station)
         if not code:
-            return [{"type": "text", "text": f"❌ 出发站无效或无法识别：{from_station}"}]
+            response_data = {"success": False, "error": f"出发站无效或无法识别：{from_station}"}
+            return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
         from_station = code
     if not is_telecode(to_station):
         code = await station_service.get_station_code(to_station)
         if not code:
-            return [{"type": "text", "text": f"❌ 到达站无效或无法识别：{to_station}"}]
+            response_data = {"success": False, "error": f"到达站无效或无法识别：{to_station}"}
+            return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
         to_station = code
     import httpx
     url_init = "https://kyfw.12306.cn/otn/leftTicket/init"
@@ -839,9 +783,11 @@ async def get_train_no_by_train_code_validated(args: dict) -> list:
             data = resp.json().get("data", {})
             tickets_data = data.get("result", [])
         except Exception:
-            return [{"type": "text", "text": "❌ 12306反爬拦截或数据异常，请稍后重试"}]
+            response_data = {"success": False, "error": "12306反爬拦截或数据异常，请稍后重试"}
+            return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
     if not tickets_data:
-        return [{"type": "text", "text": f"❌ 未找到该线路的余票数据（{from_station}->{to_station} {train_date}）"}]
+        response_data = {"success": False, "error": f"未找到该线路的余票数据（{from_station}->{to_station} {train_date}）"}
+        return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
     found = None
     for ticket_str in tickets_data:
         parts = ticket_str.split('|')
@@ -863,10 +809,10 @@ async def get_train_no_by_train_code_validated(args: dict) -> list:
                 debug_codes.append(parts[idx+2])
             except Exception:
                 continue
-        return [{"type": "text", "text": f"❌ 未找到该车次号的列车编号（{train_code} {from_station}->{to_station} {train_date}）。\n可用车次号: {debug_codes}"}]
-    return [
-        {"type": "text", "text": f"车次 {train_code}（{from_station}→{to_station}，{train_date}）的列车编号为：{found}"}
-    ]
+        response_data = {"success": False, "train_code": train_code, "from_station": from_station, "to_station": to_station, "train_date": train_date, "error": "未找到该车次号的列车编号", "available_trains": debug_codes}
+        return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
+    response_data = {"success": True, "train_code": train_code, "train_no": found, "from_station": from_station, "to_station": to_station, "train_date": train_date}
+    return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
 
 # ========== get_train_route_stations_validated 函数实现 ==========
 async def get_train_route_stations_validated(args: dict) -> list:
@@ -883,21 +829,27 @@ async def get_train_route_stations_validated(args: dict) -> list:
         
         # 参数校验
         if not train_no:
-            return [{"type": "text", "text": "❌ 车次编号(train_no)不能为空"}]
+            response_data = {"success": False, "error": "车次编号(train_no)不能为空"}
+            return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
         if not from_station:
-            return [{"type": "text", "text": "❌ 出发站不能为空"}]
+            response_data = {"success": False, "error": "出发站不能为空"}
+            return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
         if not to_station:
-            return [{"type": "text", "text": "❌ 到达站不能为空"}]
+            response_data = {"success": False, "error": "到达站不能为空"}
+            return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
         if not train_date:
-            return [{"type": "text", "text": "❌ 出发日期不能为空"}]
+            response_data = {"success": False, "error": "出发日期不能为空"}
+            return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
         
         # 日期格式校验
         try:
             dt = datetime.strptime(train_date, "%Y-%m-%d")
             if dt.date() < date.today():
-                return [{"type": "text", "text": "❌ 出发日期不能早于今天"}]
+                response_data = {"success": False, "error": "出发日期不能早于今天"}
+                return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
         except Exception:
-            return [{"type": "text", "text": "❌ 出发日期格式错误，应为YYYY-MM-DD"}]
+            response_data = {"success": False, "error": "出发日期格式错误，应为YYYY-MM-DD"}
+            return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
         
         # 三字码转换
         def is_telecode(val):
@@ -906,13 +858,15 @@ async def get_train_route_stations_validated(args: dict) -> list:
         if not is_telecode(from_station):
             code = await station_service.get_station_code(from_station)
             if not code:
-                return [{"type": "text", "text": f"❌ 出发站无效或无法识别：{from_station}"}]
+                response_data = {"success": False, "error": f"出发站无效或无法识别：{from_station}"}
+                return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
             from_station = code
         
         if not is_telecode(to_station):
             code = await station_service.get_station_code(to_station)
             if not code:
-                return [{"type": "text", "text": f"❌ 到达站无效或无法识别：{to_station}"}]
+                response_data = {"success": False, "error": f"到达站无效或无法识别：{to_station}"}
+                return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
             to_station = code
         
         # 检测输入是车次号还是列车编号
@@ -932,20 +886,19 @@ async def get_train_route_stations_validated(args: dict) -> list:
             }
             convert_result = await get_train_no_by_train_code_validated(convert_args)
             
-            if not convert_result or convert_result[0].get("type") != "text":
-                return [{"type": "text", "text": f"❌ 无法获取车次 {train_no} 的列车编号"}]
+            if not convert_result or not convert_result[0].get("text"):
+                response_data = {"success": False, "error": f"无法获取车次 {train_no} 的列车编号"}
+                return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
             
-            result_text = convert_result[0].get("text", "")
-            if "❌" in result_text:
+            result_json_str = convert_result[0].get("text", "{}")
+            result_data = json.loads(result_json_str)
+            if not result_data.get("success"):
                 return convert_result  # 返回错误信息
             
-            # 从结果中提取列车编号
-            # 格式: "车次 C9569（XXX→YYY，2024-12-01）的列车编号为：57000C95690L"
-            match = re.search(r'列车编号为：(\S+)', result_text)
-            if not match:
-                return [{"type": "text", "text": f"❌ 无法解析车次 {train_no} 的列车编号"}]
-            
-            actual_train_no = match.group(1)
+            actual_train_no = result_data.get("train_no")
+            if not actual_train_no:
+                response_data = {"success": False, "error": f"无法解析车次 {train_no} 的列车编号"}
+                return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
             logger.info(f"车次 {train_no} 转换为列车编号: {actual_train_no}")
         else:
             # 输入的是列车编号，直接使用
@@ -983,21 +936,25 @@ async def get_train_route_stations_validated(args: dict) -> list:
             # 检查HTTP状态码
             if resp.status_code != 200:
                 logger.error(f"12306接口返回异常状态码: {resp.status_code}, body: {resp.text}")
-                return [{"type": "text", "text": f"❌ 12306接口返回异常: {resp.status_code}"}]
+                response_data = {"success": False, "error": f"12306接口返回异常: {resp.status_code}"}
+                return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
             
             # 检查是否被重定向到错误页面
             if "error.html" in str(resp.url) or "ntce" in str(resp.url):
-                return [{"type": "text", "text": "❌ 12306反爬虫拦截，请稍后重试或更换网络环境。"}]
+                response_data = {"success": False, "error": "12306反爬虫拦截，请稍后重试或更换网络环境"}
+                return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
             
             try:
                 json_data = resp.json()
                 logger.info(f"12306 response keys: {list(json_data.keys()) if json_data else 'None'}")
             except Exception as e:
                 logger.error(f"12306响应解析失败: {str(e)}, body: {resp.text}")
-                return [{"type": "text", "text": f"❌ 12306响应解析失败: {str(e)}"}]
+                response_data = {"success": False, "error": f"12306响应解析失败: {str(e)}"}
+                return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
         
         if not json_data:
-            return [{"type": "text", "text": "❌ 12306接口返回空数据"}]
+            response_data = {"success": False, "error": "12306接口返回空数据"}
+            return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
         
         # 解析经停站数据 - 使用与参考实现相同的数据结构解析
         data = json_data.get("data", {})
@@ -1015,27 +972,34 @@ async def get_train_route_stations_validated(args: dict) -> list:
             stations = data["route"]
         
         if not stations:
-            return [{"type": "text", "text": f"❌ 未找到车次 {train_no} 的经停站信息"}]
+            response_data = {"success": False, "train_no": train_no, "error": "未找到经停站信息"}
+            return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
         
-        # 格式化输出 - 使用与参考实现相同的输出格式
-        text = f"🚄 **{train_no}** 经停站时刻表 ({train_date})\n\n"
-        
+        # 格式化输出JSON
+        stations_list = []
         for station in stations:
-            station_no = station.get("station_no", station.get("from_station_no", ""))
-            station_name = station.get("station_name", station.get("from_station_name", ""))
-            arrive_time = station.get("arrive_time", "----")
-            start_time = station.get("start_time", "----")
-            stopover_time = station.get("stopover_time", "----")
-            
-            text += f"{station_no}. {station_name}  到达: {arrive_time}  发车: {start_time}  停留: {stopover_time}\n"
+            station_data = {
+                "station_no": station.get("station_no", station.get("from_station_no", "")),
+                "station_name": station.get("station_name", station.get("from_station_name", "")),
+                "arrive_time": station.get("arrive_time", "----"),
+                "start_time": station.get("start_time", "----"),
+                "stopover_time": station.get("stopover_time", "----")
+            }
+            stations_list.append(station_data)
         
-        text += f"\n📊 共 **{len(stations)}** 个经停站"
-        
-        return [{"type": "text", "text": text}]
+        response_data = {
+            "success": True,
+            "train_no": train_no,
+            "train_date": train_date,
+            "count": len(stations_list),
+            "stations": stations_list
+        }
+        return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
         
     except Exception as e:
-        logger.error(f"❌ 查询经停站失败: {repr(e)}")
-        return [{"type": "text", "text": f"❌ **查询经停站失败:** {repr(e)}"}]
+        logger.error(f"查询经停站失败: {repr(e)}")
+        response_data = {"success": False, "error": "查询经停站失败", "detail": str(e)}
+        return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
 
 # ========== query_transfer_validated 函数实现 ==========
 async def query_transfer_validated(args: dict) -> list:
@@ -1053,15 +1017,18 @@ async def query_transfer_validated(args: dict) -> list:
         
         # 参数校验
         if not from_station or not to_station or not train_date:
-            return [{"type": "text", "text": "❌ 请输入出发站、到达站和出发日期"}]
+            response_data = {"success": False, "error": "请输入出发站、到达站和出发日期"}
+            return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
         
         # 日期格式校验
         try:
             dt = datetime.strptime(train_date, "%Y-%m-%d")
             if dt.date() < date.today():
-                return [{"type": "text", "text": "❌ 出发日期不能早于今天"}]
+                response_data = {"success": False, "error": "出发日期不能早于今天"}
+                return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
         except Exception:
-            return [{"type": "text", "text": "❌ 出发日期格式错误，应为YYYY-MM-DD"}]
+            response_data = {"success": False, "error": "出发日期格式错误，应为YYYY-MM-DD"}
+            return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
         
         # 自动转三字码 - 使用参考代码的实现
         async def ensure_telecode(val):
@@ -1073,13 +1040,15 @@ async def query_transfer_validated(args: dict) -> list:
         from_code = await ensure_telecode(from_station)
         to_code = await ensure_telecode(to_station)
         if not from_code:
-            return [{"type": "text", "text": f"❌ 出发站无效或无法识别：{from_station}"}]
+            response_data = {"success": False, "error": f"出发站无效或无法识别：{from_station}"}
+            return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
         if not to_code:
-            return [{"type": "text", "text": f"❌ 到达站无效或无法识别：{to_station}"}]
+            response_data = {"success": False, "error": f"到达站无效或无法识别：{to_station}"}
+            return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
         
-        # 使用参考代码的完整分页查询逻辑
+        # 使用中转查询专用接口
         url_init = "https://kyfw.12306.cn/otn/leftTicket/init"
-        url = "https://kyfw.12306.cn/otn/leftTicket/queryG"
+        url = "https://kyfw.12306.cn/lcquery/queryG"  # 中转查询专用接口
         headers = {
             "User-Agent": USER_AGENT,
             "Referer": "https://kyfw.12306.cn/otn/leftTicket/init",
@@ -1099,6 +1068,8 @@ async def query_transfer_validated(args: dict) -> list:
             # 分页查询所有中转方案
             page_size = 10
             result_index = 0
+            page_num = 1
+            
             while True:
                 params = {
                     "train_date": train_date,
@@ -1116,13 +1087,21 @@ async def query_transfer_validated(args: dict) -> list:
                 
                 # 检查反爬虫
                 if resp.status_code == 302 or "error.html" in str(resp.headers.get("location", "")):
-                    return [{"type": "text", "text": "❌ 12306反爬虫拦截（302跳转），请稍后重试或更换网络环境。"}]
+                    if page_num == 1:
+                        response_data = {"success": False, "error": "12306反爬虫拦截（302跳转），请稍后重试或更换网络环境"}
+                        return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
+                    else:
+                        break
                 
                 try:
                     data = resp.json().get("data", {})
                     transfer_list = data.get("middleList", [])
                 except Exception:
-                    return [{"type": "text", "text": "❌ 12306反爬拦截或数据异常，请稍后重试"}]
+                    if page_num == 1:
+                        response_data = {"success": False, "error": "12306反爬拦截或数据异常，请稍后重试"}
+                        return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
+                    else:
+                        break
                 
                 if not transfer_list:
                     break
@@ -1134,125 +1113,153 @@ async def query_transfer_validated(args: dict) -> list:
                     break
                 
                 result_index += page_size
+                page_num += 1
         
         if not all_transfer_list:
-            return [{"type": "text", "text": f"❌ 未查到中转方案（{from_station}→{to_station} {train_date}）"}]
+            response_data = {
+                "success": False,
+                "from_station": from_station,
+                "to_station": to_station,
+                "train_date": train_date,
+                "count": 0,
+                "transfers": [],
+                "message": "未查到中转方案"
+            }
+            return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
         
-        # 使用参考代码的输出格式
-        text = f"🚉 **中转查询结果**\n\n{from_station} → {to_station}（{train_date}）\n\n"
-        
-        for i, item in enumerate(all_transfer_list, 1):
+        # 构建JSON格式的中转方案数据
+        transfers_list = []
+        for item in all_transfer_list:
             try:
                 # 优先用 fullList，降级用 trainList
                 full_list = item.get("fullList") or item.get("trainList") or []
                 if len(full_list) < 2:
                     continue
                 
-                seg_texts = []
-                for idx, seg in enumerate(full_list, 1):
-                    code = seg.get("station_train_code", "?")
-                    from_name = seg.get("from_station_name", "?")
-                    to_name = seg.get("to_station_name", "?")
-                    st = seg.get("start_time", "?")
-                    at = seg.get("arrive_time", "?")
-                    lishi = seg.get("lishi", "")
+                # 解析每段车次
+                segments = []
+                for seg in full_list:
+                    # 座位余票信息 - 只包含有票的座位类型
+                    seats = {}
+                    seat_num = seg.get("swz_num", "")
+                    if seat_num and seat_num != "--" and seat_num != "":
+                        seats["商务座"] = seat_num
+                    seat_num = seg.get("tz_num", "")
+                    if seat_num and seat_num != "--" and seat_num != "":
+                        seats["特等座"] = seat_num
+                    seat_num = seg.get("zy_num", "")
+                    if seat_num and seat_num != "--" and seat_num != "":
+                        seats["一等座"] = seat_num
+                    seat_num = seg.get("ze_num", "")
+                    if seat_num and seat_num != "--" and seat_num != "":
+                        seats["二等座"] = seat_num
+                    seat_num = seg.get("gr_num", "")
+                    if seat_num and seat_num != "--" and seat_num != "":
+                        seats["高级软卧"] = seat_num
+                    seat_num = seg.get("rw_num", "")
+                    if seat_num and seat_num != "--" and seat_num != "":
+                        seats["软卧"] = seat_num
+                    seat_num = seg.get("rz_num", "")
+                    if seat_num and seat_num != "--" and seat_num != "":
+                        seats["一等卧"] = seat_num
+                    seat_num = seg.get("yw_num", "")
+                    if seat_num and seat_num != "--" and seat_num != "":
+                        seats["硬卧"] = seat_num
+                    seat_num = seg.get("yz_num", "")
+                    if seat_num and seat_num != "--" and seat_num != "":
+                        seats["硬座"] = seat_num
+                    seat_num = seg.get("wz_num", "")
+                    if seat_num and seat_num != "--" and seat_num != "":
+                        seats["无座"] = seat_num
                     
-                    # 余票字段严格按官方顺序输出
-                    seat_info = []
-                    # 商务座
-                    if "swz_num" in seg:
-                        seat_info.append(f"商务座:{seg.get('swz_num', '--')}")
-                    # 特等座
-                    if "tz_num" in seg:
-                        seat_info.append(f"特等座:{seg.get('tz_num', '--')}")
-                    # 一等座
-                    if "zy_num" in seg:
-                        seat_info.append(f"一等座:{seg.get('zy_num', '--')}")
-                    # 二等座
-                    if "ze_num" in seg:
-                        seat_info.append(f"二等座:{seg.get('ze_num', '--')}")
-                    # 高级软卧
-                    if "gr_num" in seg:
-                        seat_info.append(f"高级软卧:{seg.get('gr_num', '--')}")
-                    # 软卧/动卧
-                    if "rw_num" in seg:
-                        seat_info.append(f"软卧/动卧:{seg.get('rw_num', '--')}")
-                    # 一等卧
-                    if "rz_num" in seg:
-                        seat_info.append(f"一等卧/软座:{seg.get('rz_num', '--')}")
-                    # 硬卧
-                    if "yw_num" in seg:
-                        seat_info.append(f"硬卧:{seg.get('yw_num', '--')}")
-                    # 硬座
-                    if "yz_num" in seg:
-                        seat_info.append(f"硬座:{seg.get('yz_num', '--')}")                    # 无座
-                    if "wz_num" in seg:
-                        seat_info.append(f"无座:{seg.get('wz_num', '--')}")
-                    
-                    seg_text = f"    {idx}. {code} {from_name}({st}) → {to_name}({at})"
-                    if lishi:
-                        seg_text += f" 历时:{lishi}"
-                    if seat_info:
-                        seg_text += "\n         " + " | ".join(seat_info)
-                    seg_texts.append(seg_text)
+                    segment_data = {
+                        "train_code": seg.get("station_train_code", ""),
+                        "from_station": seg.get("from_station_name", ""),
+                        "to_station": seg.get("to_station_name", ""),
+                        "start_time": seg.get("start_time", ""),
+                        "arrive_time": seg.get("arrive_time", ""),
+                        "duration": seg.get("lishi", ""),
+                        "seats": seats
+                    }
+                    segments.append(segment_data)
                 
-                mid_station = item.get("middle_station_name") or full_list[0].get("to_station_name", "?")
-                wait_time = item.get("wait_time", "")
-                all_lishi = item.get("all_lishi", "")
-                
-                text += f"**{i}.** 中转站:{mid_station}  ⏱️总历时:{all_lishi}  ⏳等候:{wait_time}\n"
-                text += "\n".join(seg_texts) + "\n\n"
+                transfer_data = {
+                    "middle_station": item.get("middle_station_name") or (full_list[0].get("to_station_name", "") if full_list else ""),
+                    "wait_time": item.get("wait_time", ""),
+                    "total_duration": item.get("all_lishi", ""),
+                    "segments": segments
+                }
+                transfers_list.append(transfer_data)
                 
             except Exception as e:
-                text += f"**{i}.** [解析失败] {e}\n"
+                logger.warning(f"解析中转方案失败: {e}")
                 continue
         
-        return [{"type": "text", "text": text}]
+        response_data = {
+            "success": True,
+            "from_station": from_station,
+            "to_station": to_station,
+            "train_date": train_date,
+            "count": len(transfers_list),
+            "transfers": transfers_list
+        }
+        return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
         
     except Exception as e:
-        logger.error(f"❌ 查询中转失败: {repr(e)}")
-        return [{"type": "text", "text": f"❌ **查询中转失败:** {repr(e)}"}]
+        logger.error(f"查询中转失败: {repr(e)}")
+        response_data = {"success": False, "error": "查询中转失败", "detail": str(e)}
+        return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
 
 # ========== get_current_time_validated 新增时间工具 ==========
 async def get_current_time_validated(args: dict) -> list:
     """
-    只返回当前时间（YYYY-MM-DD HH:mm:ss），不返回相对日期、周几等。
+    返回当前时间信息JSON格式
     """
     try:
         from datetime import datetime
         import pytz
         timezone_str = args.get("timezone", "Asia/Shanghai")
+        date_format = args.get("format", "YYYY-MM-DD")
         try:
             tz = pytz.timezone(timezone_str)
             now = datetime.now(tz)
         except pytz.exceptions.UnknownTimeZoneError:
             tz = pytz.timezone("Asia/Shanghai")
             now = datetime.now(tz)
-        text = now.strftime("%Y-%m-%d %H:%M:%S") + f" {tz.zone}"
-        return [{"type": "text", "text": text}]
+        
+        response_data = {
+            "success": True,
+            "timezone": tz.zone,
+            "datetime": now.strftime("%Y-%m-%d %H:%M:%S"),
+            "date": now.strftime("%Y-%m-%d"),
+            "time": now.strftime("%H:%M:%S"),
+            "timestamp": int(now.timestamp())
+        }
+        return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
     except Exception as e:
-        logger.error(f"❌ 获取时间信息失败: {repr(e)}")
-        return [{"type": "text", "text": f"❌ **获取时间信息失败:** {repr(e)}"}]
+        logger.error(f"获取时间信息失败: {repr(e)}")
+        response_data = {"success": False, "error": "获取时间信息失败", "detail": str(e)}
+        return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
 
 @app.on_event("startup")
 async def startup_event():
     """应用启动时的初始化工作"""
-    logger.info("🚀 启动12306 MCP服务器...")
-    logger.info(f"📋 协议版本: {MCP_PROTOCOL_VERSION}")
-    logger.info(f"🚄 传输类型: Streamable HTTP")
+    logger.info("启动12306 MCP服务器...")
+    logger.info(f"协议版本: {MCP_PROTOCOL_VERSION}")
+    logger.info(f"传输类型: Streamable HTTP")
     
     # Load station data
-    logger.info("📚 正在加载车站数据...")
+    logger.info("正在加载车站数据...")
     await station_service.load_stations()
-    logger.info(f"✅ 已加载 {len(station_service.stations)} 个车站")
+    logger.info(f"已加载 {len(station_service.stations)} 个车站")
 
 async def main_server():
     """启动MCP服务器"""
-    logger.info("🚀 启动12306 MCP服务器...")
-    logger.info(f"📋 协议版本: {MCP_PROTOCOL_VERSION}")
-    logger.info(f"🚄 传输类型: Streamable HTTP")
-    logger.info(f"📡 MCP端点: http://{settings.server_host}:{settings.server_port}/mcp")
-    logger.info(f"📚 健康检查: http://{settings.server_host}:{settings.server_port}/health")
+    logger.info("启动12306 MCP服务器...")
+    logger.info(f"协议版本: {MCP_PROTOCOL_VERSION}")
+    logger.info(f"传输类型: Streamable HTTP")
+    logger.info(f"MCP端点: http://{settings.server_host}:{settings.server_port}/mcp")
+    logger.info(f"健康检查: http://{settings.server_host}:{settings.server_port}/health")
     
     config = uvicorn.Config(
         app,
