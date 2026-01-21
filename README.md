@@ -1,6 +1,8 @@
 # 🚄 12306 MCP Server
 
-![screenshot](https://img.shields.io/badge/12306-MCP-blue?logo=railway) ![FastAPI](https://img.shields.io/badge/FastAPI-async-green?logo=fastapi) ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
+[![MCP Badge](https://lobehub.com/badge/mcp/drfccv-mcp-server-12306?style=flat)](https://lobehub.com/mcp/drfccv-mcp-server-12306) 
+![FastAPI](https://img.shields.io/badge/FastAPI-async-green?logo=fastapi) 
+![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
 
 ---
 
