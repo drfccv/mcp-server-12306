@@ -16,7 +16,8 @@ from .server import (
     get_train_route_stations_validated,
     query_transfer_validated,
     get_current_time_validated,
-    station_service as global_station_service
+    station_service as global_station_service,
+    SERVER_NAME
 )
 
 logging.basicConfig(
@@ -223,7 +224,7 @@ async def run_stdio_server():
     import sys
     import mcp_12306
 
-    logger.info(f"启动 {SERVER_NAME} (stdio 模式)...")
+    logger.info("启动 mcp-server-12306 (stdio 模式)...")
     logger.info(f"版本: {mcp_12306.__version__}")
     
     logger.info("正在加载车站数据...")
