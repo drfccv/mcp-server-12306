@@ -635,27 +635,44 @@ async def query_tickets_validated(args: dict) -> list:
             "Host": "kyfw.12306.cn",
             "Accept": "application/json, text/javascript, */*; q=0.01"
         }
-        async with httpx.AsyncClient(follow_redirects=False, timeout=8, verify=False) as client:
-            await client.get(url_init, headers=headers)
-            params = {
-                "leftTicketDTO.train_date": train_date,
-                "leftTicketDTO.from_station": from_code,
-                "leftTicketDTO.to_station": to_code,
-                "purpose_codes": "ADULT"
-            }
-            resp = await client.get(url_u, headers=headers, params=params)
-            logger.info(f"12306 queryG status: {resp.status_code}, url: {resp.url}")
-            if resp.status_code != 200:
-                logger.error(f"12306接口返回异常: {resp.status_code}, body: {resp.text}")
-                response_data = {"success": False, "error": "12306接口返回异常", "status_code": resp.status_code, "detail": resp.text[:200]}
-                return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
+        max_retries = 3
+        last_exception = None
+        tickets_data = []
+
+        for attempt in range(max_retries):
             try:
-                data = resp.json().get("data", {})
-                tickets_data = data.get("result", [])
-            except Exception as e:
-                logger.error(f"12306响应解析失败: {repr(e)}，原始内容: {resp.text}")
-                response_data = {"success": False, "error": "12306响应解析失败", "detail": f"{type(e).__name__}: {str(e)}"}
-                return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
+                async with httpx.AsyncClient(follow_redirects=False, timeout=8, verify=False) as client:
+                    await client.get(url_init, headers=headers)
+                    params = {
+                        "leftTicketDTO.train_date": train_date,
+                        "leftTicketDTO.from_station": from_code,
+                        "leftTicketDTO.to_station": to_code,
+                        "purpose_codes": "ADULT"
+                    }
+                    resp = await client.get(url_u, headers=headers, params=params)
+                    logger.info(f"12306 queryG status: {resp.status_code}, url: {resp.url}")
+                    if resp.status_code != 200:
+                        logger.error(f"12306接口返回异常: {resp.status_code}, body: {resp.text}")
+                        response_data = {"success": False, "error": "12306接口返回异常", "status_code": resp.status_code, "detail": resp.text[:200]}
+                        return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
+                    try:
+                        data = resp.json().get("data", {})
+                        tickets_data = data.get("result", [])
+                        break  # Success
+                    except Exception as e:
+                        logger.error(f"12306响应解析失败: {repr(e)}，原始内容: {resp.text}")
+                        response_data = {"success": False, "error": "12306响应解析失败", "detail": f"{type(e).__name__}: {str(e)}"}
+                        return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
+            except (httpx.TimeoutException, httpx.NetworkError, httpx.ConnectError) as e:
+                last_exception = e
+                if attempt < max_retries - 1:
+                    logger.warning(f"查询车票网络请求失败，正在重试 ({attempt + 1}/{max_retries}): {str(e)}")
+                    await asyncio.sleep(1)
+                else:
+                    logger.error(f"查询车票网络请求重试次数已耗尽: {str(e)}")
+        else:
+            response_data = {"success": False, "error": f"网络请求失败 (已重试{max_retries}次): {str(last_exception)}"}
+            return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
         tickets = []
         for ticket_str in tickets_data:
             ticket = parse_ticket_string(ticket_str, {
@@ -928,32 +945,49 @@ async def get_train_route_stations_validated(args: dict) -> list:
             "Origin": "https://kyfw.12306.cn"
         }
         
-        async with httpx.AsyncClient(follow_redirects=False, timeout=8, verify=False) as client:
-            # 先访问init获取cookie
-            init_resp = await client.get("https://kyfw.12306.cn/otn/leftTicket/init", headers=headers)
-            logger.info(f"12306 init status: {init_resp.status_code}")
-            
-            resp = await client.get(url, headers=headers, params=params)
-            logger.info(f"12306 route query status: {resp.status_code}, url: {resp.url}")
-            
-            # 检查HTTP状态码
-            if resp.status_code != 200:
-                logger.error(f"12306接口返回异常状态码: {resp.status_code}, body: {resp.text}")
-                response_data = {"success": False, "error": f"12306接口返回异常: {resp.status_code}"}
-                return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
-            
-            # 检查是否被重定向到错误页面
-            if "error.html" in str(resp.url) or "ntce" in str(resp.url):
-                response_data = {"success": False, "error": "12306反爬虫拦截，请稍后重试或更换网络环境"}
-                return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
-            
+        max_retries = 3
+        last_exception = None
+        json_data = None
+
+        for attempt in range(max_retries):
             try:
-                json_data = resp.json()
-                logger.info(f"12306 response keys: {list(json_data.keys()) if json_data else 'None'}")
-            except Exception as e:
-                logger.error(f"12306响应解析失败: {str(e)}, body: {resp.text}")
-                response_data = {"success": False, "error": f"12306响应解析失败: {str(e)}"}
-                return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
+                async with httpx.AsyncClient(follow_redirects=False, timeout=8, verify=False) as client:
+                    # 先访问init获取cookie
+                    init_resp = await client.get("https://kyfw.12306.cn/otn/leftTicket/init", headers=headers)
+                    logger.info(f"12306 init status: {init_resp.status_code}")
+                    
+                    resp = await client.get(url, headers=headers, params=params)
+                    logger.info(f"12306 route query status: {resp.status_code}, url: {resp.url}")
+                    
+                    # 检查HTTP状态码
+                    if resp.status_code != 200:
+                        logger.error(f"12306接口返回异常状态码: {resp.status_code}, body: {resp.text}")
+                        response_data = {"success": False, "error": f"12306接口返回异常: {resp.status_code}"}
+                        return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
+                    
+                    # 检查是否被重定向到错误页面
+                    if "error.html" in str(resp.url) or "ntce" in str(resp.url):
+                        response_data = {"success": False, "error": "12306反爬虫拦截，请稍后重试或更换网络环境"}
+                        return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
+                    
+                    try:
+                        json_data = resp.json()
+                        logger.info(f"12306 response keys: {list(json_data.keys()) if json_data else 'None'}")
+                        break # Success
+                    except Exception as e:
+                        logger.error(f"12306响应解析失败: {str(e)}, body: {resp.text}")
+                        response_data = {"success": False, "error": f"12306响应解析失败: {str(e)}"}
+                        return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
+            except (httpx.TimeoutException, httpx.NetworkError, httpx.ConnectError) as e:
+                last_exception = e
+                if attempt < max_retries - 1:
+                    logger.warning(f"查询经停站网络请求失败，正在重试 ({attempt + 1}/{max_retries}): {str(e)}")
+                    await asyncio.sleep(1)
+                else:
+                    logger.error(f"查询经停站网络请求重试次数已耗尽: {str(e)}")
+        else:
+            response_data = {"success": False, "error": f"网络请求失败 (已重试{max_retries}次): {str(last_exception)}"}
+            return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
         
         if not json_data:
             response_data = {"success": False, "error": "12306接口返回空数据"}
@@ -1064,59 +1098,79 @@ async def query_transfer_validated(args: dict) -> list:
         }
         
         all_transfer_list = []
-        async with httpx.AsyncClient(follow_redirects=False, timeout=8, verify=False) as client:
-            # 先访问init获取cookie
-            await client.get(url_init, headers=headers)
-            
-            # 分页查询所有中转方案
-            page_size = 10
-            result_index = 0
-            page_num = 1
-            
-            while True:
-                params = {
-                    "train_date": train_date,
-                    "from_station_telecode": from_code,
-                    "to_station_telecode": to_code,
-                    "middle_station": middle_station,
-                    "result_index": str(result_index),
-                    "can_query": "Y",
-                    "isShowWZ": isShowWZ,
-                    "purpose_codes": purpose_codes,
-                    "channel": "E"
-                }
-                
-                resp = await client.get(url, headers=headers, params=params)
-                
-                # 检查反爬虫
-                if resp.status_code == 302 or "error.html" in str(resp.headers.get("location", "")):
-                    if page_num == 1:
-                        response_data = {"success": False, "error": "12306反爬虫拦截（302跳转），请稍后重试或更换网络环境"}
-                        return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
-                    else:
-                        break
-                
-                try:
-                    data = resp.json().get("data", {})
-                    transfer_list = data.get("middleList", [])
-                except Exception:
-                    if page_num == 1:
-                        response_data = {"success": False, "error": "12306反爬拦截或数据异常，请稍后重试"}
-                        return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
-                    else:
-                        break
-                
-                if not transfer_list:
+        max_retries = 3
+        last_exception = None
+
+        for attempt in range(max_retries):
+            try:
+                async with httpx.AsyncClient(follow_redirects=False, timeout=8, verify=False) as client:
+                    # 先访问init获取cookie
+                    await client.get(url_init, headers=headers)
+                    
+                    # 分页查询所有中转方案
+                    page_size = 10
+                    result_index = 0
+                    page_num = 1
+                    
+                    while True:
+                        params = {
+                            "train_date": train_date,
+                            "from_station_telecode": from_code,
+                            "to_station_telecode": to_code,
+                            "middle_station": middle_station,
+                            "result_index": str(result_index),
+                            "can_query": "Y",
+                            "isShowWZ": isShowWZ,
+                            "purpose_codes": purpose_codes,
+                            "channel": "E"
+                        }
+                        
+                        resp = await client.get(url, headers=headers, params=params)
+                        
+                        # 检查反爬虫
+                        if resp.status_code == 302 or "error.html" in str(resp.headers.get("location", "")):
+                            if page_num == 1:
+                                response_data = {"success": False, "error": "12306反爬虫拦截（302跳转），请稍后重试或更换网络环境"}
+                                return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
+                            else:
+                                break
+                        
+                        try:
+                            data = resp.json().get("data", {})
+                            transfer_list = data.get("middleList", [])
+                        except Exception:
+                            if page_num == 1:
+                                response_data = {"success": False, "error": "12306反爬拦截或数据异常，请稍后重试"}
+                                return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
+                            else:
+                                break
+                        
+                        if not transfer_list:
+                            break
+                        
+                        all_transfer_list.extend(transfer_list)
+                        
+                        # 如果返回的数据少于页面大小，说明已经是最后一页
+                        if len(transfer_list) < page_size:
+                            break
+                        
+                        result_index += page_size
+                        page_num += 1
+                    
+                    # Success
                     break
-                
-                all_transfer_list.extend(transfer_list)
-                
-                # 如果返回的数据少于页面大小，说明已经是最后一页
-                if len(transfer_list) < page_size:
-                    break
-                
-                result_index += page_size
-                page_num += 1
+            except (httpx.TimeoutException, httpx.NetworkError, httpx.ConnectError) as e:
+                last_exception = e
+                # 清空可能已获取的部分数据，准备重试
+                all_transfer_list = []
+                if attempt < max_retries - 1:
+                    logger.warning(f"中转查询网络请求失败，正在重试 ({attempt + 1}/{max_retries}): {str(e)}")
+                    await asyncio.sleep(1)
+                else:
+                    logger.error(f"中转查询网络请求重试次数已耗尽: {str(e)}")
+        else:
+            response_data = {"success": False, "error": f"网络请求失败 (已重试{max_retries}次): {str(last_exception)}"}
+            return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
         
         if not all_transfer_list:
             response_data = {
