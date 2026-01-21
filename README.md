@@ -19,7 +19,7 @@ MCP Server 12306是一款基于 Model Context Protocol (MCP) 的高性能火车�
 - 全国车站信息管理与模糊搜索
 - 官方经停站、一次中转方案全支持
 - 智能时间工具，支持时区和时间戳
-- Streamable HTTP传输协议，支持MCP 2025-03-26标准
+- Streamable HTTP/STDIO传输协议，支持MCP 2025-03-26标准
 - FastAPI异步高性能，秒级响应
 - MCP标准，AI/自动化场景即插即用
 
@@ -37,7 +37,7 @@ MCP Server 12306是一款基于 Model Context Protocol (MCP) 的高性能火车�
 
 在此模式下，MCP Server 通过标准输入/输出与客户端通信，无需占用网络端口。
 
-#### 方式 A：使用 uvx（推荐 - 极速体验）
+#### 方式 A：使用 uvx（推荐）
 
 `uvx` 是 `uv` 包管理器提供的工具，环境隔离且启动极快。
 

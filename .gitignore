@@ -66,4 +66,4 @@ coverage.xml
 .mypy_cache/
 .dmypy.json
 dmypy.json
-src/mcp_12306/resources/station_name.js
+
