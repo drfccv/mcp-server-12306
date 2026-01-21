@@ -1,4 +1,4 @@
-# 🚄 12306 MCP Server
+# 🚄 MCP Server 12306
 
 ![screenshot](https://img.shields.io/badge/12306-MCP-blue?logo=railway) 
 ![FastAPI](https://img.shields.io/badge/FastAPI-async-green?logo=fastapi) 
@@ -8,7 +8,7 @@
 
 ## ✨ 项目简介
 
-12306 MCP Server 是一款基于 Model Context Protocol (MCP) 的高性能火车票查询后端，支持官方 12306 余票、车站、经停、换乘查询以及智能时间工具，适配 AI/自动化/智能助手等场景。界面友好，易于集成，开箱即用。
+MCP Server 12306是一款基于 Model Context Protocol (MCP) 的高性能火车票查询后端，支持官方 12306 余票、车站、经停、换乘查询以及智能时间工具，适配 AI/自动化/智能助手等场景。界面友好，易于集成，开箱即用。
 
 
 ---
