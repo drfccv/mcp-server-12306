@@ -14,14 +14,77 @@
 }
 ```
 
-### 返回示例
+### 返回示例（JSON格式）
 ```json
 {
-  "content": [
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"success\":true,\"train_no\":\"G1234\",\"train_date\":\"2025-06-01\",\"count\":5,\"stations\":[...]}"
+      }
+    ]
+  }
+}
+```
+
+### 解析后的JSON数据
+```json
+{
+  "success": true,
+  "train_no": "G1234",
+  "train_date": "2025-06-01",
+  "count": 5,
+  "stations": [
     {
-      "type": "text",
-      "text": "🚄 **G1234** 经停站时刻表 (2025-06-01)\n\n1. 九江  到达: ----  发车: 08:00  停留: ----\n2. 永修  到达: 08:26  发车: ----  停留: 2分\n\n📊 共 **2** 个经停站"
+      "station_no": "1",
+      "station_name": "九江",
+      "arrive_time": "----",
+      "start_time": "08:00",
+      "stopover_time": "----"
+    },
+    {
+      "station_no": "2",
+      "station_name": "德安",
+      "arrive_time": "08:10",
+      "start_time": "08:12",
+      "stopover_time": "2分"
+    },
+    {
+      "station_no": "3",
+      "station_name": "共青城",
+      "arrive_time": "08:18",
+      "start_time": "08:20",
+      "stopover_time": "2分"
+    },
+    {
+      "station_no": "4",
+      "station_name": "庐山",
+      "arrive_time": "08:22",
+      "start_time": "08:24",
+      "stopover_time": "2分"
+    },
+    {
+      "station_no": "5",
+      "station_name": "永修",
+      "arrive_time": "08:26",
+      "start_time": "----",
+      "stopover_time": "----"
     }
   ]
 }
 ```
+
+### 返回字段说明
+- `success`: 布尔值，表示查询是否成功
+- `train_no`: 车次号
+- `train_date`: 出发日期
+- `count`: 经停站数量
+- `stations`: 经停站列表
+  - `station_no`: 站序
+  - `station_name`: 车站名称
+  - `arrive_time`: 到达时间
+  - `start_time`: 出发时间
+  - `stopover_time`: 停留时间

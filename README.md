@@ -1,6 +1,6 @@
 # 🚄 12306 MCP Server
 
-[![MCP Badge](https://lobehub.com/badge/mcp/drfccv-mcp-server-12306?style=flat)](https://lobehub.com/mcp/drfccv-mcp-server-12306) 
+![screenshot](https://img.shields.io/badge/12306-MCP-blue?logo=railway) 
 ![FastAPI](https://img.shields.io/badge/FastAPI-async-green?logo=fastapi) 
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
 
@@ -10,6 +10,7 @@
 
 12306 MCP Server 是一款基于 Model Context Protocol (MCP) 的高性能火车票查询后端，支持官方 12306 余票、车站、经停、换乘查询以及智能时间工具，适配 AI/自动化/智能助手等场景。界面友好，易于集成，开箱即用。
 
+
 ---
 
 ## 🚀 功能亮点
@@ -17,7 +18,7 @@
 - 实时余票/车次/座席/时刻/换乘一站式查询
 - 全国车站信息管理与模糊搜索
 - 官方经停站、一次中转方案全支持
-- 智能时间工具，支持相对日期计算，避免日期输入错误
+- 智能时间工具，支持时区和时间戳
 - Streamable HTTP传输协议，支持MCP 2025-03-26标准
 - FastAPI异步高性能，秒级响应
 - MCP标准，AI/自动化场景即插即用
@@ -55,10 +56,6 @@ uv run python scripts/start_server.py
  docker run -d -p 8000:8000 --name mcp-server-12306 drfccv/mcp-server-12306:latest
 ```
 
-> 如需自定义开发或本地修改后再打包，可用如下命令自行构建镜像：
-> ```bash
-> docker build -t drfccv/mcp-server-12306:latest .
-> ```
 
 ### 配置
 复制 `.env.example` 为 `.env` 并按需修改：
@@ -120,31 +117,9 @@ cp .env.example .env
 src/mcp_12306/    # 主源代码
   ├─ server.py    # FastAPI主入口
   ├─ services/    # 业务逻辑（车票/车站/HTTP）
-  ├─ models/      # 数据模型
   ├─ utils/       # 工具与配置
 scripts/          # 启动与数据脚本
 ```
-
----
-
-## 🧪 测试
-```bash
-uv run pytest
-```
-
----
-
-## 📦 镜像发布与拉取
-
-- 镜像仓库：[drfccv/mcp-server-12306](https://hub.docker.com/r/drfccv/mcp-server-12306)
-- 拉取镜像：
-  ```bash
-  docker pull drfccv/mcp-server-12306:latest
-  ```
-- 运行镜像：
-  ```bash
-  docker run -d -p 8000:8000 --name 12306-mcp-server drfccv/mcp-server-12306:latest
-  ```
 
 ---
 

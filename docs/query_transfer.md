@@ -9,18 +9,88 @@
 {
   "from_station": "九江",
   "to_station": "永修",
-  "train_date": "2025-06-01"
+  "train_date": "2025-06-01",
+  "middle_station": "",
+  "isShowWZ": "N",
+  "purpose_codes": "00"
 }
 ```
 
-### 返回示例
+### 返回示例（JSON格式）
 ```json
 {
-  "content": [
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"success\":true,\"from_station\":\"九江\",\"to_station\":\"永修\",\"train_date\":\"2025-06-01\",\"count\":2,\"transfers\":[...]}"
+      }
+    ]
+  }
+}
+```
+
+### 解析后的JSON数据
+```json
+{
+  "success": true,
+  "from_station": "九江",
+  "to_station": "永修",
+  "train_date": "2025-06-01",
+  "count": 2,
+  "transfers": [
     {
-      "type": "text",
-      "text": "🚉 **中转查询结果**\n\n九江 → 永修（2025-06-01）\n\n1. 中转站:南昌  ⏱️总历时:02:10  ⏳等候:00:30\n    1. G1234 九江(08:00) → 南昌(08:30) 历时:00:30\n         二等座:有 | 无座:有\n    2. G5678 南昌(09:00) → 永修(09:40) 历时:00:40\n         二等座:有 | 无座:有\n"
+      "middle_station": "南昌",
+      "total_duration": "02:10",
+      "wait_time": "00:30",
+      "segments": [
+        {
+          "train_no": "G1234",
+          "from_station": "九江",
+          "to_station": "南昌",
+          "start_time": "08:00",
+          "arrive_time": "08:30",
+          "duration": "00:30",
+          "seats": {
+            "second_class": "有",
+            "no_seat": "有"
+          }
+        },
+        {
+          "train_no": "G5678",
+          "from_station": "南昌",
+          "to_station": "永修",
+          "start_time": "09:00",
+          "arrive_time": "09:40",
+          "duration": "00:40",
+          "seats": {
+            "second_class": "15",
+            "no_seat": "有"
+          }
+        }
+      ]
     }
   ]
 }
 ```
+
+### 返回字段说明
+- `success`: 布尔值，表示查询是否成功
+- `from_station`: 出发站名称
+- `to_station`: 到达站名称
+- `train_date`: 出发日期
+- `count`: 中转方案数量
+- `transfers`: 中转方案列表
+  - `middle_station`: 中转站
+  - `total_duration`: 总历时
+  - `wait_time`: 等候时间
+  - `segments`: 车次段列表（两段）
+    - `train_no`: 车次号
+    - `from_station`: 出发站
+    - `to_station`: 到达站
+    - `start_time`: 出发时间
+    - `arrive_time`: 到达时间
+    - `duration`: 历时
+    - `seats`: 座位余票信息
