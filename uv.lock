@@ -666,8 +666,8 @@ wheels = [
 ]
 
 [[package]]
-name = "mcp-12306"
-version = "0.1.0"
+name = "mcp-server-12306"
+version = "0.1.4"
 source = { editable = "." }
 dependencies = [
     { name = "aiofiles" },

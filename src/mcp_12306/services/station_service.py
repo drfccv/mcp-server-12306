@@ -24,15 +24,30 @@ class StationService:
     def __init__(self):
         self.stations = []
 
-    async def load_stations(self, path="src/mcp_12306/resources/station_name.js"):
+    async def load_stations(self, path=None):
         """
         解析12306原始JS，提取站点及所属城市信息
         自动检测并修复字段顺序异常的数据行，增强排列组合尝试。
         """
-        if not os.path.exists(path):
-            logging.error(f"站点文件不存在: {path}")
-            return
-        async with aiofiles.open(path, mode="r", encoding="utf-8") as f:
+        # 计算默认绝对路径
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        default_path = os.path.normpath(os.path.join(current_dir, "..", "resources", "station_name.js"))
+        
+        target_path = path
+        if target_path is None:
+            target_path = default_path
+            
+        if not os.path.exists(target_path):
+            logging.warning(f"指定路径不存在: {target_path}")
+            # 如果指定路径不存在，且不是默认路径，尝试使用默认路径
+            if target_path != default_path and os.path.exists(default_path):
+                logging.info(f"尝试使用默认资源路径: {default_path}")
+                target_path = default_path
+            else:
+                logging.error(f"无法找到站点文件，请检查安装完整性。路径: {target_path}")
+                return
+
+        async with aiofiles.open(target_path, mode="r", encoding="utf-8") as f:
             content = await f.read()
         m = re.search(r"var station_names ?= ?'(.*?)';", content)
         if not m:

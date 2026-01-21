@@ -653,7 +653,7 @@ async def query_tickets_validated(args: dict) -> list:
                 tickets_data = data.get("result", [])
             except Exception as e:
                 logger.error(f"12306响应解析失败: {repr(e)}，原始内容: {resp.text}")
-                response_data = {"success": False, "error": "12306响应解析失败", "detail": str(e)}
+                response_data = {"success": False, "error": "12306响应解析失败", "detail": f"{type(e).__name__}: {str(e)}"}
                 return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
         tickets = []
         for ticket_str in tickets_data:
@@ -724,8 +724,10 @@ async def query_tickets_validated(args: dict) -> list:
             }
             return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
     except Exception as e:
-        logger.error(f"查询车票失败: {repr(e)}")
-        response_data = {"success": False, "error": "查询失败", "detail": str(e)}
+        import traceback
+        error_detail = f"{type(e).__name__}: {str(e)}"
+        logger.error(f"查询车票失败: {error_detail}\n{traceback.format_exc()}")
+        response_data = {"success": False, "error": "查询失败", "detail": error_detail}
         return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
 
 # ========== get_train_no_by_train_code_validated 重构 ========== 

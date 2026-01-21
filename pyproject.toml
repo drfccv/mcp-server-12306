@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mcp-server-12306"
-version = "0.1.1"
+version = "0.1.9"
 description = "MCP服务器用于12306车票查询"
 authors = [
     {name = "Drfccv", email = "2713587802@qq.com"}
@@ -62,6 +62,7 @@ name = "aliyun"
 url = "https://mirrors.aliyun.com/pypi/simple/"
 
 [project.scripts]
+mcp-server-12306 = "mcp_12306.cli:main"
 mcp-12306 = "mcp_12306.server:main"
 
 [tool.black]
@@ -80,3 +81,9 @@ disallow_untyped_defs = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/mcp_12306"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/mcp_12306/resources/station_name.js" = "mcp_12306/resources/station_name.js"
+
+[tool.hatch.build.targets.sdist.force-include]
+"src/mcp_12306/resources/station_name.js" = "src/mcp_12306/resources/station_name.js"

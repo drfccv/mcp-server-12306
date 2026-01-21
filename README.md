@@ -27,11 +27,36 @@ MCP Server 12306是一款基于 Model Context Protocol (MCP) 的高性能火车�
 
 ## 🛠️ 快速上手
 
-### 环境要求
-- Python 3.10+
-- [uv](https://astral.sh/uv/)（推荐包管理器）
+### 方式 1：使用 pipx（推荐 - 开箱即用）
 
-### 本地一键部署
+**无需克隆仓库，直接使用！**
+
+```bash
+# 使用 pipx 运行（无需安装）
+pipx run mcp-server-12306
+
+# 或者先安装再使用
+pipx install mcp-server-12306
+mcp-server-12306
+```
+
+#### Claude Desktop 配置（stdio 模式）
+
+```json
+{
+  "mcpServers": {
+    "12306": {
+      "command": "pipx",
+      "args": ["run", "mcp-server-12306"]
+    }
+  }
+}
+```
+
+---
+
+### 方式 2：本地开发部署
+
 ```bash
 # 克隆项目
 git clone https://github.com/drfccv/mcp-server-12306.git
@@ -43,31 +68,29 @@ uv sync
 # 更新车站信息（必须先执行）
 uv run python scripts/update_stations.py
 
-# 启动服务器
+# 方式 2a: stdio 模式（推荐用于 Claude Desktop）
+uv run python -m mcp_12306.cli
+
+# 方式 2b: HTTP 服务器模式
 uv run python scripts/start_server.py
 ```
 
-### Docker 部署
-```bash
-# 直接拉取已构建镜像
- docker pull drfccv/mcp-server-12306:latest
+#### MCP 客户端配置示例（本地开发）
 
-# 运行容器（映射8000端口）
- docker run -d -p 8000:8000 --name mcp-server-12306 drfccv/mcp-server-12306:latest
+**Stdio 模式（Claude Desktop）:**
+```json
+{
+  "mcpServers": {
+    "12306": {
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/mcp-server-12306", "python", "-m", "mcp_12306.cli"],
+      "cwd": "/path/to/mcp-server-12306"
+    }
+  }
+}
 ```
 
-
-### 配置
-复制 `.env.example` 为 `.env` 并按需修改：
-```bash
-cp .env.example .env
-```
-
----
-
-## 🤖 API & 工具一览
-
-### MCP 客户端配置示例
+**HTTP 模式:**
 ```json
 {
   "mcpServers": {
@@ -77,6 +100,22 @@ cp .env.example .env
   }
 }
 ```
+
+---
+
+### 方式 3：Docker 部署
+
+```bash
+# 直接拉取已构建镜像
+docker pull drfccv/mcp-server-12306:latest
+
+# 运行容器（映射8000端口）
+docker run -d -p 8000:8000 --name mcp-server-12306 drfccv/mcp-server-12306:latest
+```
+
+---
+
+## 🤖 工具一览
 
 ### 支持的主流程工具
 | 工具名                    | 典型场景/功能描述                 |
