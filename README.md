@@ -27,16 +27,19 @@ MCP Server 12306是一款基于 Model Context Protocol (MCP) 的高性能火车�
 
 ## 🛠️ 快速上手
 
-### 方式 1：使用 uvx
+本项目支持两种运行模式：
+1. **Stdio 模式**：适用于 Claude Desktop 等本地 MCP 客户端（推荐）。
+2. **Streamable HTTP 模式**：适用于远程部署或通过 SSE/Post 访问。
 
-`uvx` 是 `uv` 包管理器提供的工具，比 pipx 更快且无需手动管理环境。
+---
 
-```bash
-# 直接运行（自动下载最新版）
-uvx mcp-server-12306
-```
+### 模式 1：Stdio 模式（Claude Desktop 推荐）
 
-#### Claude Desktop 配置
+在此模式下，MCP Server 通过标准输入/输出与客户端通信，无需占用网络端口。
+
+#### 方式 A：使用 uvx（推荐 - 极速体验）
+
+`uvx` 是 `uv` 包管理器提供的工具，环境隔离且启动极快。
 
 ```json
 {
@@ -49,21 +52,32 @@ uvx mcp-server-12306
 }
 ```
 
-### 方式 2：使用 pipx
+#### 方式 B：使用 pipx
 
-```bash
-# 运行
-pipx run mcp-server-12306
-```
-
-#### Claude Desktop 配置
+如果您更习惯使用 pipx：
 
 ```json
 {
   "mcpServers": {
     "12306": {
       "command": "pipx",
-      "args": ["run", "mcp-server-12306"]
+      "args": ["run", "--no-cache", "mcp-server-12306"]
+    }
+  }
+}
+```
+
+#### 方式 C：本地源码运行
+
+适用于开发者调试：
+
+```json
+{
+  "mcpServers": {
+    "12306": {
+      "command": "uv",
+      "args": ["run", "python", "-m", "mcp_12306.cli"],
+      "cwd": "/path/to/mcp-server-12306"
     }
   }
 }
@@ -71,42 +85,24 @@ pipx run mcp-server-12306
 
 ---
 
-### 方式 3：本地开发部署
+### 模式 2：Streamable HTTP 模式
+
+在此模式下，Server 启动一个 Web 服务（默认 8000 端口），支持 MCP 的 SSE（Server-Sent Events）和 POST 交互。
+
+#### 方式 A：本地源码运行
 
 ```bash
-# 克隆项目
+# 1. 克隆并安装依赖
 git clone https://github.com/drfccv/mcp-server-12306.git
 cd mcp-server-12306
-
-# 安装依赖
 uv sync
 
-# 更新车站信息（必须先执行）
-uv run python scripts/update_stations.py
-
-# 方式 2a: stdio 模式（推荐用于 Claude Desktop）
-uv run python -m mcp_12306.cli
-
-# 方式 2b: HTTP 服务器模式
+# 2. 启动服务器
 uv run python scripts/start_server.py
 ```
 
-#### MCP 客户端配置示例（本地开发）
+**MCP 客户端配置：**
 
-**Stdio 模式（Claude Desktop）:**
-```json
-{
-  "mcpServers": {
-    "12306": {
-      "command": "uv",
-      "args": ["run", "--directory", "/path/to/mcp-server-12306", "python", "-m", "mcp_12306.cli"],
-      "cwd": "/path/to/mcp-server-12306"
-    }
-  }
-}
-```
-
-**HTTP 模式:**
 ```json
 {
   "mcpServers": {
@@ -117,15 +113,10 @@ uv run python scripts/start_server.py
 }
 ```
 
----
-
-### 方式 3：Docker 部署
+#### 方式 B：Docker 部署
 
 ```bash
-# 直接拉取已构建镜像
-docker pull drfccv/mcp-server-12306:latest
-
-# 运行容器（映射8000端口）
+# 拉取镜像并运行
 docker run -d -p 8000:8000 --name mcp-server-12306 drfccv/mcp-server-12306:latest
 ```
 
