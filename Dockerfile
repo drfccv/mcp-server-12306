@@ -11,12 +11,15 @@ COPY README.md ./
 # 安装依赖（推荐使用pip，如果你用poetry可自行调整）
 RUN pip install --upgrade pip && \
     pip install uv && \
-    uv sync
+    uv sync --no-install-project
 
 # 复制项目代码
 COPY src ./src
 COPY docs ./docs
 COPY scripts ./scripts
+
+# 安装项目本身
+RUN uv sync
 
 # 设置时区（可选）
 ENV TZ=Asia/Shanghai

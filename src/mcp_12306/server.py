@@ -1082,6 +1082,15 @@ async def query_transfer_validated(args: dict) -> list:
         if not to_code:
             response_data = {"success": False, "error": f"到达站无效或无法识别：{to_station}"}
             return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
+
+        # 处理中转站：如果是中文名称，尝试转换为三字码
+        middle_station_code = ""
+        if middle_station:
+            middle_station_code = await ensure_telecode(middle_station)
+            if not middle_station_code:
+                # 如果转换失败，记录日志但继续尝试使用原值（虽然很可能失败）
+                logger.warning(f"无法识别中转站: {middle_station}")
+                middle_station_code = middle_station 
         
         # 使用中转查询专用接口
         url_init = "https://kyfw.12306.cn/otn/leftTicket/init"
@@ -1117,7 +1126,7 @@ async def query_transfer_validated(args: dict) -> list:
                             "train_date": train_date,
                             "from_station_telecode": from_code,
                             "to_station_telecode": to_code,
-                            "middle_station": middle_station,
+                            "middle_station": middle_station_code,
                             "result_index": str(result_index),
                             "can_query": "Y",
                             "isShowWZ": isShowWZ,
