@@ -26,7 +26,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # 创建 MCP Server 实例
-server = Server("12306-mcp-server")
+server = Server("mcp-server-12306")
 
 # 工具名称映射到处理函数
 TOOL_HANDLERS = {
@@ -223,7 +223,7 @@ async def run_stdio_server():
     import sys
     import mcp_12306
 
-    logger.info("启动 12306 MCP Server (stdio 模式)...")
+    logger.info(f"启动 {SERVER_NAME} (stdio 模式)...")
     logger.info(f"版本: {mcp_12306.__version__}")
     
     logger.info("正在加载车站数据...")

@@ -16,6 +16,7 @@ import uvicorn
 from .services.station_service import StationService
 from .utils.config import get_settings
 from .utils.date_utils import validate_date
+from . import __version__
 
 settings = get_settings()
 
@@ -28,8 +29,8 @@ station_service = StationService()
 
 # MCP Protocol Version - Support 2025-03-26 Streamable HTTP transport
 MCP_PROTOCOL_VERSION = "2025-03-26"  # Updated to latest protocol version
-SERVER_NAME = "12306-mcp-server"
-SERVER_VERSION = "1.0.0"
+SERVER_NAME = "mcp-server-12306"
+SERVER_VERSION = __version__
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -146,9 +147,9 @@ MCP_TOOLS = [
 ]
 
 app = FastAPI(
-    title="12306 MCP Server",
-    version="1.0.0",
-    description="基于MCP协议(2025-03-26 Streamable HTTP)的12306火车票查询服务，支持直达、过站和换乘查询",
+    title=SERVER_NAME,
+    version=SERVER_VERSION,
+    description=f"基于MCP协议(2025-03-26 Streamable HTTP)的12306火车票查询服务，支持直达、过站和换乘查询",
     debug=settings.debug
 )
 
@@ -163,8 +164,8 @@ app.add_middleware(
 @app.get("/")
 async def root():
     return {
-        "name": "12306 MCP Server",
-        "version": "1.0.0",
+        "name": SERVER_NAME,
+        "version": SERVER_VERSION,
         "status": "running",
         "mcp_endpoint": "/mcp",
         "protocol_version": MCP_PROTOCOL_VERSION,
