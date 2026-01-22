@@ -1,15 +1,15 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-fancy-pypi-readme"]
 build-backend = "hatchling.build"
 
 [project]
 name = "mcp-server-12306"
-version = "0.2.3"
+version = "0.2.5"
 description = "MCP服务器用于12306车票查询"
 authors = [
     {name = "Drfccv", email = "2713587802@qq.com"}
 ]
-readme = "README.md"
+dynamic = ["readme"]
 requires-python = ">=3.10"
 dependencies = [
     "fastapi>=0.104.0",
@@ -87,3 +87,12 @@ packages = ["src/mcp_12306"]
 
 [tool.hatch.build.targets.sdist.force-include]
 "src/mcp_12306/resources/station_name.js" = "src/mcp_12306/resources/station_name.js"
+
+[tool.hatch.metadata.hooks.fancy-pypi-readme]
+content-type = "text/markdown"
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.fragments]]
+path = "README.md"
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.fragments]]
+text = "\n\nmcp-name: io.github.drfccv/mcp-server-12306"

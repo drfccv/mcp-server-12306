@@ -37,55 +37,8 @@ TOOL_HANDLERS = {
     "get-train-route-stations": get_train_route_stations_validated,
     "query-transfer": query_transfer_validated,
     "get-current-time": get_current_time_validated,
-    "get-station-info": None,  # 将在下面实现
 }
 
-
-# get_station_info 工具实现
-async def get_station_info_validated(args: dict) -> list:
-    """获取车站详细信息"""
-    import json
-    try:
-        query = args.get("query", "").strip()
-        if not query:
-            response_data = {"success": False, "error": "请输入车站名称或代码"}
-            return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
-        
-        # 尝试通过代码获取
-        station = await global_station_service.get_station_by_code(query)
-        if not station:
-            # 尝试通过名称获取
-            code = await global_station_service.get_station_code(query)
-            if code:
-                station = await global_station_service.get_station_by_code(code)
-        
-        if station:
-            response_data = {
-                "success": True,
-                "station": {
-                    "name": station.name,
-                    "code": station.code,
-                    "pinyin": station.pinyin,
-                    "py_short": station.py_short if station.py_short else "",
-                    "num": station.num if hasattr(station, 'num') else ""
-                }
-            }
-            return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
-        else:
-            response_data = {
-                "success": False,
-                "query": query,
-                "error": "未找到该车站",
-                "suggestion": "请使用 search-stations 工具进行模糊搜索"
-            }
-            return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
-    except Exception as e:
-        logger.error(f"获取车站信息失败: {repr(e)}")
-        response_data = {"success": False, "error": "获取车站信息失败", "detail": str(e)}
-        return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
-
-
-TOOL_HANDLERS["get-station-info"] = get_station_info_validated
 
 
 @server.list_tools()
@@ -94,7 +47,7 @@ async def list_tools() -> list[Tool]:
     return [
         Tool(
             name="query-tickets",
-            description="官方12306余票/车次/座席/时刻一站式查询。输入出发站、到达站、日期，返回所有可购车次、时刻、历时、各席别余票等详细信息。支持中文名、三字码。",
+            description="官方12306余票/车次/座席/时刻一站式查询。输入出发站、到达站、日期，返回所有可购车次、时刻、历时、各席别余票等详细信息。支持中文名、三字码。\n\n【智能筛选指南】返回结果通常包含出发/到达城市的所有相关车站（如北京/北京西/北京南）。请根据用户输入语境灵活处理：\n1. 用户仅输入城市名（如'九江'）：请展示所有相关站点的车次，不要过滤。\n2. 用户指定具体车站（如'九江站'）：优先展示匹配车站的车次，但若其他同城车站有更优方案（如时间更短、有票），也应作为补充选项提供。\n请避免机械地仅通过字符串匹配过滤车次，以免遗漏用户可能感兴趣的出行方案。", 
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -106,26 +59,32 @@ async def list_tools() -> list[Tool]:
             }
         ),
         Tool(
-            name="search-stations",
-            description="智能模糊查站，支持中文名、拼音、简拼、三字码等多种方式，快速获取车站全名与三字码。",
+            name="query-ticket-price",
+            description="查询火车票价信息。输入出发站、到达站、日期，返回各车次的票价详情。支持指定车次号过滤。\n\n【智能筛选指南】返回结果通常包含出发/到达城市的所有相关车站（如北京/北京西/北京南）。请根据用户输入语境灵活处理：\n1. 用户仅输入城市名（如'九江'）：请展示所有相关站点的车次，不要过滤。\n2. 用户指定具体车站（如'九江站'）：优先展示匹配车站的车次，但若其他同城车站有更优方案（如时间更短、有票），也应作为补充选项提供。\n请避免机械地仅通过字符串匹配过滤车次，以免遗漏用户可能感兴趣的出行方案。",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "车站搜索关键词"},
-                    "limit": {"type": "integer", "description": "返回结果数量限制", "default": 10}
+                    "from_station": {"type": "string", "description": "出发站", "minLength": 1},
+                    "to_station": {"type": "string", "description": "到达站", "minLength": 1},
+                    "train_date": {"type": "string", "description": "出发日期", "pattern": "^\\d{4}-\\d{2}-\\d{2}$"},
+                    "train_code": {"type": "string", "description": "车次号（可选）", "title": "车次号（可选）"},
+                    "purpose_codes": {"type": "string", "description": "乘客类型 (ADULT=成人, 0X=学生)", "default": "ADULT", "title": "乘客类型"}
                 },
-                "required": ["query"]
+                "required": ["from_station", "to_station", "train_date"],
+                "additionalProperties": False
             }
         ),
         Tool(
-            name="get-station-info",
-            description="获取车站详细信息（名称、代码、拼音等）。输入车站名称或三字码，返回完整车站信息。",
+            name="search-stations",
+            description="智能车站搜索。支持中文名、拼音、简拼、三字码（Code）。可用于模糊搜索（如“北京”），也可用于精确获取车站代码（如输入“BJP”返回北京站信息）。",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "车站名称或三字码"}
+                    "query": {"type": "string", "description": "车站搜索关键词，支持：车站名称、拼音、简拼等", "minLength": 1, "maxLength": 20},
+                    "limit": {"type": "integer", "description": "返回结果的最大数量", "minimum": 1, "maximum": 50, "default": 10}
                 },
-                "required": ["query"]
+                "required": ["query"],
+                "additionalProperties": False
             }
         ),
         Tool(
