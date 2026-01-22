@@ -62,7 +62,11 @@ MCP_TOOLS = [
     },
     {
         "name": "query-ticket-price",
+<<<<<<< HEAD
         "description": "查询火车票价信息。输入出发站、到达站、日期，返回各车次的票价详情。支持指定车次号过滤。\n\n【智能筛选指南】返回结果通常包含出发/到达城市的所有相关车站（如北京/北京西/北京南）。请根据用户输入语境灵活处理：\n1. 用户仅输入城市名（如'九江'）：请展示所有相关站点的车次，不要过滤。\n2. 用户指定具体车站（如'九江站'）：优先展示匹配车站的车次，但若其他同城车站有更优方案（如时间更短、有票），也应作为补充选项提供。\n请避免机械地仅通过字符串匹配过滤车次，以免遗漏用户可能感兴趣的出行方案。",
+=======
+        "description": "查询火车票价信息。输入出发站、到达站、日期，返回各车次的票价详情。",
+>>>>>>> 417ff5758061c383ee146bc025e1af5766f0ba38
         "inputSchema": {
             "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
@@ -1296,6 +1300,7 @@ async def query_transfer_validated(args: dict) -> list:
         response_data = {"success": False, "error": "查询中转失败", "detail": str(e)}
         return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
 
+<<<<<<< HEAD
 
 # ========== query_ticket_price_validated 函数实现 ==========
 async def query_ticket_price_validated(args: dict) -> list:
@@ -1463,6 +1468,106 @@ async def query_ticket_price_validated(args: dict) -> list:
         response_data = {"success": False, "error": "查询票价失败", "detail": str(e)}
         return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
 
+=======
+
+# ========== query_ticket_price_validated 函数实现 ==========
+async def query_ticket_price_validated(args: dict) -> list:
+    """
+    查询火车票价信息
+    """
+    try:
+        from_station = args.get("from_station", "").strip()
+        to_station = args.get("to_station", "").strip()
+        train_date = args.get("train_date", "").strip()
+        purpose_codes = args.get("purpose_codes", "ADULT").strip()
+        
+        # 参数校验
+        if not from_station or not to_station or not train_date:
+            response_data = {"success": False, "error": "请输入出发站、到达站和出发日期"}
+            return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
+            
+        # 日期校验
+        if not validate_date(train_date):
+             response_data = {"success": False, "error": "日期格式错误，请使用 YYYY-MM-DD 格式"}
+             return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
+
+        # 转换三字码
+        async def ensure_telecode(val):
+            if val.isalpha() and val.isupper() and len(val) == 3:
+                return val
+            code = await station_service.get_station_code(val)
+            return code
+
+        from_code = await ensure_telecode(from_station)
+        to_code = await ensure_telecode(to_station)
+        
+        if not from_code:
+             response_data = {"success": False, "error": f"出发站无效: {from_station}"}
+             return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
+        if not to_code:
+             response_data = {"success": False, "error": f"到达站无效: {to_station}"}
+             return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
+
+        import httpx
+        url_init = "https://kyfw.12306.cn/otn/leftTicket/init"
+        url_price = "https://kyfw.12306.cn/otn/leftTicketPrice/queryAllPublicPrice"
+        
+        headers = {
+            "User-Agent": USER_AGENT,
+            "Referer": "https://kyfw.12306.cn/otn/leftTicket/init",
+            "Host": "kyfw.12306.cn",
+            "Accept": "application/json, text/javascript, */*; q=0.01"
+        }
+        
+        params = {
+            "leftTicketDTO.train_date": train_date,
+            "leftTicketDTO.from_station": from_code,
+            "leftTicketDTO.to_station": to_code,
+            "purpose_codes": purpose_codes
+        }
+
+        max_retries = 3
+        last_exception = None
+        json_data = None
+
+        for attempt in range(max_retries):
+            try:
+                async with httpx.AsyncClient(follow_redirects=False, timeout=8, verify=False) as client:
+                    await client.get(url_init, headers=headers)
+                    resp = await client.get(url_price, headers=headers, params=params)
+                    logger.info(f"12306 price query status: {resp.status_code}, url: {resp.url}")
+                    
+                    if resp.status_code != 200:
+                         logger.error(f"12306接口返回异常: {resp.status_code}")
+                         response_data = {"success": False, "error": f"12306接口返回异常: {resp.status_code}"}
+                         return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
+                    
+                    try:
+                        json_data = resp.json()
+                        break
+                    except Exception as e:
+                        logger.error(f"12306响应解析失败: {str(e)}")
+                        response_data = {"success": False, "error": "12306响应解析失败", "detail": str(e)}
+                        return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
+            except (httpx.TimeoutException, httpx.NetworkError, httpx.ConnectError) as e:
+                last_exception = e
+                if attempt < max_retries - 1:
+                    logger.warning(f"票价查询网络请求失败，正在重试 ({attempt + 1}/{max_retries}): {str(e)}")
+                    await asyncio.sleep(1)
+                else:
+                    logger.error(f"票价查询网络请求重试次数已耗尽: {str(e)}")
+        else:
+            response_data = {"success": False, "error": f"网络请求失败 (已重试{max_retries}次): {str(last_exception)}"}
+            return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
+
+        return [{"type": "text", "text": json.dumps(json_data, ensure_ascii=False)}]
+        
+    except Exception as e:
+        logger.error(f"查询票价失败: {repr(e)}")
+        response_data = {"success": False, "error": "查询票价失败", "detail": str(e)}
+        return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
+
+>>>>>>> 417ff5758061c383ee146bc025e1af5766f0ba38
 # ========== get_current_time_validated 新增时间工具 ==========
 async def get_current_time_validated(args: dict) -> list:
     """
