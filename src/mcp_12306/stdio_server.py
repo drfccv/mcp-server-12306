@@ -12,6 +12,7 @@ from .services.station_service import StationService
 from .server import (
     search_stations_validated,
     query_tickets_validated,
+    query_ticket_price_validated,
     get_train_no_by_train_code_validated,
     get_train_route_stations_validated,
     query_transfer_validated,
@@ -32,6 +33,7 @@ server = Server("mcp-server-12306")
 # 工具名称映射到处理函数
 TOOL_HANDLERS = {
     "query-tickets": query_tickets_validated,
+    "query-ticket-price": query_ticket_price_validated,
     "search-stations": search_stations_validated,
     "get-train-no-by-train-code": get_train_no_by_train_code_validated,
     "get-train-route-stations": get_train_route_stations_validated,

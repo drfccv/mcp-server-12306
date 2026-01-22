@@ -8,10 +8,31 @@ in stdio mode, suitable for use with Claude Desktop and other MCP clients.
 import asyncio
 import sys
 import logging
+import argparse
+from mcp_12306 import __version__
 
 
 def main():
     """Main entry point for the CLI command"""
+    parser = argparse.ArgumentParser(
+        description="MCP Server for 12306 Ticket Query (Stdio Mode)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Run the MCP server (wait for JSON-RPC on stdin)
+  mcp-server-12306
+  
+  # Show version
+  mcp-server-12306 --version
+"""
+    )
+    parser.add_argument(
+        "--version", 
+        action="version", 
+        version=f"%(prog)s {__version__}"
+    )
+    args = parser.parse_args()
+
     # 配置日志输出到 stderr，避免干扰 stdio 通信
     logging.basicConfig(
         level=logging.INFO,
