@@ -15,7 +15,7 @@ import uvicorn
 
 from .services.station_service import StationService
 from .utils.config import get_settings
-from .utils.date_utils import validate_date
+from .utils.date_utils import validate_date, validate_date_not_past
 from . import __version__
 
 settings = get_settings()
@@ -37,6 +37,27 @@ USER_AGENT = (
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/123.0.0.0 Safari/537.36"
 )
+
+# 中国铁路 12306 API 常量 - URL
+HTTP_URLS = {
+    "init": "https://kyfw.12306.cn/otn/leftTicket/init",
+    "query_left_ticket": "https://kyfw.12306.cn/otn/leftTicket/queryG",
+    "query_transfer": "https://kyfw.12306.cn/lcquery/queryG",
+    "query_price": "https://kyfw.12306.cn/otn/leftTicketPrice/queryAllPublicPrice",
+    "query_route_stations": "https://kyfw.12306.cn/otn/czxx/queryByTrainNo",
+}
+
+# 中国铁路 12306 API 通用请求头
+HTTP_HEADERS = {
+    "User-Agent": USER_AGENT,
+    "Referer": "https://kyfw.12306.cn/otn/leftTicket/init",
+    "Host": "kyfw.12306.cn",
+    "Accept": "application/json, text/javascript, */*; q=0.01",
+    "Accept-Language": "zh-CN,zh;q=0.9",
+    "Connection": "keep-alive",
+    "X-Requested-With": "XMLHttpRequest",
+    "Origin": "https://kyfw.12306.cn"
+}
 
 # Connected clients for session management
 connected_clients: Dict[str, Dict] = {}
@@ -629,6 +650,12 @@ async def query_tickets_validated(args: dict) -> list:
             errors.append("出发日期不能为空")
         elif not validate_date(train_date):
             errors.append("日期格式错误，请使用 YYYY-MM-DD 格式")
+        else:
+            # 检查日期是否早于今天
+            is_valid, error_msg = validate_date_not_past(train_date)
+            if not is_valid:
+                errors.append(error_msg)
+        
         if errors:
             response_data = {"success": False, "errors": errors}
             return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
@@ -646,15 +673,11 @@ async def query_tickets_validated(args: dict) -> list:
                     suggestions.append({"station_type": "to", "input": to_station, "matches": [{"name": s.name, "code": s.code, "pinyin": s.pinyin, "py_short": s.py_short} for s in result.stations]})
             response_data = {"success": False, "error": "车站名称无效", "suggestions": suggestions, "hint": "可尝试拼音、简拼、三字码或用 search_stations 工具辅助查询"}
             return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
+        
         import httpx
-        url_init = "https://kyfw.12306.cn/otn/leftTicket/init"
-        url_u = "https://kyfw.12306.cn/otn/leftTicket/queryG"
-        headers = {
-            "User-Agent": USER_AGENT,
-            "Referer": "https://kyfw.12306.cn/otn/leftTicket/init",
-            "Host": "kyfw.12306.cn",
-            "Accept": "application/json, text/javascript, */*; q=0.01"
-        }
+        url_init = HTTP_URLS["init"]
+        url_u = HTTP_URLS["query_left_ticket"]
+        headers = HTTP_HEADERS.copy()
         max_retries = 3
         last_exception = None
         tickets_data = []
@@ -779,37 +802,31 @@ async def get_train_no_by_train_code_validated(args: dict) -> list:
     from_station = args.get("from_station", "").strip().upper()
     to_station = args.get("to_station", "").strip().upper()
     train_date = args.get("train_date", "").strip()
-    try:
-        dt = datetime.strptime(train_date, "%Y-%m-%d")
-        if dt.date() < date.today():
-            response_data = {"success": False, "error": "出发日期不能早于今天"}
-            return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
-    except Exception:
-        response_data = {"success": False, "error": "出发日期格式错误，应为YYYY-MM-DD"}
+    
+    # 日期校验 - 复用 validate_date_not_past 函数
+    is_valid, error_msg = validate_date_not_past(train_date)
+    if not is_valid:
+        response_data = {"success": False, "error": error_msg}
         return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
-    def is_telecode(val):
-        return val.isalpha() and val.isupper() and len(val) == 3
-    if not is_telecode(from_station):
-        code = await station_service.get_station_code(from_station)
-        if not code:
-            response_data = {"success": False, "error": f"出发站无效或无法识别：{from_station}"}
-            return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
-        from_station = code
-    if not is_telecode(to_station):
-        code = await station_service.get_station_code(to_station)
-        if not code:
-            response_data = {"success": False, "error": f"到达站无效或无法识别：{to_station}"}
-            return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
-        to_station = code
-    import httpx
-    url_init = "https://kyfw.12306.cn/otn/leftTicket/init"
-    url_u = "https://kyfw.12306.cn/otn/leftTicket/queryG"
-    headers = {
-        "User-Agent": USER_AGENT,
-        "Referer": "https://kyfw.12306.cn/otn/leftTicket/init",
-        "Host": "kyfw.12306.cn",
-        "Accept": "application/json, text/javascript, */*; q=0.01"
-    }
+    
+    # 三字码转换 - 复用 ensure_telecode 函数
+    from_code = await ensure_telecode(from_station)
+    if not from_code:
+        response_data = {"success": False, "error": f"出发站无效或无法识别：{from_station}"}
+        return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
+    from_station = from_code
+    
+    to_code = await ensure_telecode(to_station)
+    if not to_code:
+        response_data = {"success": False, "error": f"到达站无效或无法识别：{to_station}"}
+        return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
+    to_station = to_code
+    
+    # HTTP 请求 - 复用全局 headers 定义
+    url_init = HTTP_URLS["init"]
+    url_u = HTTP_URLS["query_left_ticket"]
+    headers = HTTP_HEADERS.copy()
+    
     async with httpx.AsyncClient(follow_redirects=False, timeout=8, verify=False) as client:
         await client.get(url_init, headers=headers)
         params = {
@@ -825,33 +842,59 @@ async def get_train_no_by_train_code_validated(args: dict) -> list:
         except Exception:
             response_data = {"success": False, "error": "12306反爬拦截或数据异常，请稍后重试"}
             return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
+    
     if not tickets_data:
         response_data = {"success": False, "error": f"未找到该线路的余票数据（{from_station}->{to_station} {train_date}）"}
         return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
+    
+    # 辅助函数：从 ticket_str 中解析车次号和列车编号
+    def extract_train_info(ticket_str):
+        """从车次字符串中提取车次号和列车编号"""
+        try:
+            parts = ticket_str.split('|')
+            idx = parts.index('预订')
+            return {
+                "train_no": parts[idx+1].strip(),
+                "train_code": parts[idx+2].strip().upper()
+            }
+        except Exception:
+            return None
+    
+    # 查找匹配的车次
     found = None
     for ticket_str in tickets_data:
-        parts = ticket_str.split('|')
-        try:
-            idx = parts.index('预订')
-            train_no = parts[idx+1].strip()
-            train_code_str = parts[idx+2].strip().upper()
-            if train_code_str == train_code:
-                found = train_no
-                break
-        except Exception:
-            continue
+        info = extract_train_info(ticket_str)
+        if info and info["train_code"] == train_code:
+            found = info["train_no"]
+            break
+    
     if not found:
+        # 收集所有可用的车次号用于调试
         debug_codes = []
-        for p in tickets_data:
-            try:
-                parts = p.split('|')
-                idx = parts.index('预订')
-                debug_codes.append(parts[idx+2])
-            except Exception:
-                continue
-        response_data = {"success": False, "train_code": train_code, "from_station": from_station, "to_station": to_station, "train_date": train_date, "error": "未找到该车次号的列车编号", "available_trains": debug_codes}
+        for ticket_str in tickets_data:
+            info = extract_train_info(ticket_str)
+            if info:
+                debug_codes.append(info["train_code"])
+        
+        response_data = {
+            "success": False,
+            "train_code": train_code,
+            "from_station": from_station,
+            "to_station": to_station,
+            "train_date": train_date,
+            "error": "未找到该车次号的列车编号",
+            "available_trains": debug_codes
+        }
         return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
-    response_data = {"success": True, "train_code": train_code, "train_no": found, "from_station": from_station, "to_station": to_station, "train_date": train_date}
+    
+    response_data = {
+        "success": True,
+        "train_code": train_code,
+        "train_no": found,
+        "from_station": from_station,
+        "to_station": to_station,
+        "train_date": train_date
+    }
     return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
 
 # ========== get_train_route_stations_validated 函数实现 ==========
@@ -881,14 +924,10 @@ async def get_train_route_stations_validated(args: dict) -> list:
             response_data = {"success": False, "error": "出发日期不能为空"}
             return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
         
-        # 日期格式校验
-        try:
-            dt = datetime.strptime(train_date, "%Y-%m-%d")
-            if dt.date() < date.today():
-                response_data = {"success": False, "error": "出发日期不能早于今天"}
-                return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
-        except Exception:
-            response_data = {"success": False, "error": "出发日期格式错误，应为YYYY-MM-DD"}
+        # 日期格式校验和早于今天的校验
+        is_valid, error_msg = validate_date_not_past(train_date)
+        if not is_valid:
+            response_data = {"success": False, "error": error_msg}
             return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
         
         # 三字码转换
@@ -946,7 +985,7 @@ async def get_train_route_stations_validated(args: dict) -> list:
             logger.info(f"使用列车编号: {actual_train_no}")
         
         # 调用12306经停站接口 - 使用正确的API端点
-        url = "https://kyfw.12306.cn/otn/czxx/queryByTrainNo"
+        url = HTTP_URLS["query_route_stations"]
         params = {
             "train_no": actual_train_no,  # 使用转换后的列车编号
             "from_station_telecode": from_station,
@@ -955,15 +994,7 @@ async def get_train_route_stations_validated(args: dict) -> list:
         }
         
         # 使用与参考实现相同的请求方式
-        headers = {
-            "User-Agent": USER_AGENT,
-            "Referer": "https://kyfw.12306.cn/otn/leftTicket/init",
-            "Accept": "application/json, text/javascript, */*; q=0.01",
-            "Accept-Language": "zh-CN,zh;q=0.9",
-            "Connection": "keep-alive",
-            "Host": "kyfw.12306.cn",            "X-Requested-With": "XMLHttpRequest",
-            "Origin": "https://kyfw.12306.cn"
-        }
+        headers = HTTP_HEADERS.copy()
         
         max_retries = 3
         last_exception = None
@@ -1077,14 +1108,10 @@ async def query_transfer_validated(args: dict) -> list:
             response_data = {"success": False, "error": "请输入出发站、到达站和出发日期"}
             return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
         
-        # 日期格式校验
-        try:
-            dt = datetime.strptime(train_date, "%Y-%m-%d")
-            if dt.date() < date.today():
-                response_data = {"success": False, "error": "出发日期不能早于今天"}
-                return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
-        except Exception:
-            response_data = {"success": False, "error": "出发日期格式错误，应为YYYY-MM-DD"}
+        # 日期格式校验和早于今天的校验
+        is_valid, error_msg = validate_date_not_past(train_date)
+        if not is_valid:
+            response_data = {"success": False, "error": error_msg}
             return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
         
         # 自动转三字码 - 使用参考代码的实现
@@ -1113,18 +1140,9 @@ async def query_transfer_validated(args: dict) -> list:
                 middle_station_code = middle_station 
         
         # 使用中转查询专用接口
-        url_init = "https://kyfw.12306.cn/otn/leftTicket/init"
-        url = "https://kyfw.12306.cn/lcquery/queryG"  # 中转查询专用接口
-        headers = {
-            "User-Agent": USER_AGENT,
-            "Referer": "https://kyfw.12306.cn/otn/leftTicket/init",
-            "Accept": "application/json, text/javascript, */*; q=0.01",
-            "Accept-Language": "zh-CN,zh;q=0.9",
-            "Connection": "keep-alive",
-            "Host": "kyfw.12306.cn",
-            "X-Requested-With": "XMLHttpRequest",
-            "Origin": "https://kyfw.12306.cn"
-        }
+        url_init = HTTP_URLS["init"]
+        url = HTTP_URLS["query_transfer"]
+        headers = HTTP_HEADERS.copy()
         
         all_transfer_list = []
         max_retries = 3
@@ -1314,10 +1332,11 @@ async def query_ticket_price_validated(args: dict) -> list:
             response_data = {"success": False, "error": "请输入出发站、到达站和出发日期"}
             return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
             
-        # 日期校验
-        if not validate_date(train_date):
-             response_data = {"success": False, "error": "日期格式错误，请使用 YYYY-MM-DD 格式"}
-             return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
+        # 日期格式校验和早于今天的校验
+        is_valid, error_msg = validate_date_not_past(train_date)
+        if not is_valid:
+            response_data = {"success": False, "error": error_msg}
+            return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
 
         # 转换三字码
         async def ensure_telecode(val):
@@ -1337,15 +1356,9 @@ async def query_ticket_price_validated(args: dict) -> list:
              return [{"type": "text", "text": json.dumps(response_data, ensure_ascii=False)}]
 
         import httpx
-        url_init = "https://kyfw.12306.cn/otn/leftTicket/init"
-        url_price = "https://kyfw.12306.cn/otn/leftTicketPrice/queryAllPublicPrice"
-        
-        headers = {
-            "User-Agent": USER_AGENT,
-            "Referer": "https://kyfw.12306.cn/otn/leftTicket/init",
-            "Host": "kyfw.12306.cn",
-            "Accept": "application/json, text/javascript, */*; q=0.01"
-        }
+        url_init = HTTP_URLS["init"]
+        url_price = HTTP_URLS["query_price"]
+        headers = HTTP_HEADERS.copy()
         
         params = {
             "leftTicketDTO.train_date": train_date,
