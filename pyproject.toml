@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mcp-server-12306"
-version = "0.3.1"
+version = "0.3.1.post20260211"
 description = "MCP服务器用于12306车票查询"
 authors = [
     {name = "Drfccv", email = "2713587802@qq.com"}
