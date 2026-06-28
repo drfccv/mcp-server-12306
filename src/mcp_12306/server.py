@@ -1,3 +1,4 @@
+import os
 import asyncio
 import json
 import logging
@@ -684,7 +685,7 @@ async def query_tickets_validated(args: dict) -> list:
 
         for attempt in range(max_retries):
             try:
-                async with httpx.AsyncClient(follow_redirects=False, timeout=8, verify=False) as client:
+                async with httpx.AsyncClient(follow_redirects=True, timeout=8, verify=False, proxy=os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")) as client:
                     await client.get(url_init, headers=headers)
                     params = {
                         "leftTicketDTO.train_date": train_date,
@@ -693,6 +694,13 @@ async def query_tickets_validated(args: dict) -> list:
                         "purpose_codes": "ADULT"
                     }
                     resp = await client.get(url_u, headers=headers, params=params)
+                    try:
+                        _rb = resp.json()
+                    except Exception:
+                        _rb = {}
+                    if _rb.get("status") is False and _rb.get("c_url"):
+                        url_u = f"https://kyfw.12306.cn/otn/{_rb['c_url']}"
+                        resp = await client.get(url_u, headers=headers, params=params)
                     logger.info(f"12306 queryG status: {resp.status_code}, url: {resp.url}")
                     if resp.status_code != 200:
                         logger.error(f"12306接口返回异常: {resp.status_code}, body: {resp.text}")
@@ -827,7 +835,7 @@ async def get_train_no_by_train_code_validated(args: dict) -> list:
     url_u = HTTP_URLS["query_left_ticket"]
     headers = HTTP_HEADERS.copy()
     
-    async with httpx.AsyncClient(follow_redirects=False, timeout=8, verify=False) as client:
+    async with httpx.AsyncClient(follow_redirects=True, timeout=8, verify=False, proxy=os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")) as client:
         await client.get(url_init, headers=headers)
         params = {
             "leftTicketDTO.train_date": train_date,
@@ -1002,7 +1010,7 @@ async def get_train_route_stations_validated(args: dict) -> list:
 
         for attempt in range(max_retries):
             try:
-                async with httpx.AsyncClient(follow_redirects=False, timeout=8, verify=False) as client:
+                async with httpx.AsyncClient(follow_redirects=True, timeout=8, verify=False, proxy=os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")) as client:
                     # 先访问init获取cookie
                     init_resp = await client.get("https://kyfw.12306.cn/otn/leftTicket/init", headers=headers)
                     logger.info(f"12306 init status: {init_resp.status_code}")
@@ -1150,7 +1158,7 @@ async def query_transfer_validated(args: dict) -> list:
 
         for attempt in range(max_retries):
             try:
-                async with httpx.AsyncClient(follow_redirects=False, timeout=8, verify=False) as client:
+                async with httpx.AsyncClient(follow_redirects=True, timeout=8, verify=False, proxy=os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")) as client:
                     # 先访问init获取cookie
                     await client.get(url_init, headers=headers)
                     
@@ -1373,7 +1381,7 @@ async def query_ticket_price_validated(args: dict) -> list:
 
         for attempt in range(max_retries):
             try:
-                async with httpx.AsyncClient(follow_redirects=False, timeout=8, verify=False) as client:
+                async with httpx.AsyncClient(follow_redirects=True, timeout=8, verify=False, proxy=os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")) as client:
                     await client.get(url_init, headers=headers)
                     resp = await client.get(url_price, headers=headers, params=params)
                     logger.info(f"12306 price query status: {resp.status_code}, url: {resp.url}")
