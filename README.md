@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/drfccv-mcp-server-12306-badge.png)](https://mseep.ai/app/drfccv-mcp-server-12306)
+
 # 🚄 MCP Server 12306
 
 ![screenshot](https://img.shields.io/badge/12306-MCP-blue?logo=railway)
