@@ -1,5 +1,7 @@
 # 🚄 MCP Server 12306
 
+[![MCP Toplist](https://mcptoplist.com/badge/io.github.drfccv%2Fmcp-server-12306.svg)](https://mcptoplist.com/server/io.github.drfccv%2Fmcp-server-12306)
+
 ![screenshot](https://img.shields.io/badge/12306-MCP-blue?logo=railway)
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python)
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
